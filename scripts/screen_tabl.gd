@@ -2585,7 +2585,7 @@ func _additional_screen_pixel_under_mouse(mouse_position: Vector2) -> Variant:
 
 
 func _setup_screen_material() -> void:
-	if screen_model == null:
+	if screen_model == null and not is_instance_valid(screen_surface_mesh):
 		push_warning("Screens: не назначена модель основного экрана.")
 		return
 
@@ -2614,7 +2614,7 @@ func _setup_screen_material() -> void:
 
 
 func _setup_additional_screen_material() -> void:
-	if additional_screen_model == null:
+	if additional_screen_model == null and not is_instance_valid(additional_screen_surface_mesh):
 		push_warning("Screens: не назначена модель AdditionalScreen.")
 		return
 	if additional_screen_viewport == null:
