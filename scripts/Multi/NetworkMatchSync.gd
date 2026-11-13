@@ -391,10 +391,11 @@ func _cancel_local_drag_if_touching(targets: Array[Pile]) -> void:
 func handle_undo_request(player_slot: int) -> void:
 	if player_slot != local_slot or game_manager == null:
 		return
-	if mini(game_manager.history.size(), game_manager.undo_charges) <= 0:
+	var field_id := field_of_slot(local_slot)
+	if game_manager.get_field_history_count(field_id) <= 0 or game_manager.undo_charges <= 0:
 		return
 	# undo() шлёт history_changed — снимок уйдёт сопернику автоматически.
-	game_manager.undo()
+	game_manager.undo(true, field_id)
 
 
 # ==================================================
