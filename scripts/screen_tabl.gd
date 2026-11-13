@@ -45,9 +45,13 @@ const FOUNDATION_RANKS := [
 @export_group("Очки")
 @export_range(3.0, 5.0, 1.0) var score_loss_interval := 4.0
 
-@export_group("Модель экрана")
+@export_group("Модели экранов")
+## Назначь основной экран или корень его модели. Если указан общий корень
+## двух экранов, AdditionalScreen будет исключён из материала основного экрана.
 @export var screen_model: Node3D
+@export var additional_screen_model: Node3D
 @export_range(0, 10, 1) var screen_surface_index := 1
+@export_range(0, 10, 1) var additional_screen_surface_index := 1
 @export_range(0.1, 3.0, 0.1) var emission_energy := 1.3
 @export var rotate_clockwise := true
 
@@ -65,6 +69,9 @@ var undo_button_p1: Area3D
 var undo_button_p2: Area3D
 var screen_viewport: SubViewport
 var screen_material: ShaderMaterial
+var additional_screen_viewport: SubViewport
+var additional_screen_material: ShaderMaterial
+var additional_screen_ui: Dictionary = {}
 var screen_refresh_queued := false
 
 var ui_scale := 1.0
@@ -91,13 +98,12 @@ func _ready() -> void:
 		screen_default_saved = true
 
 	_setup_viewport()
+	_setup_additional_viewport()
 	_setup_screen_material()
+	_setup_additional_screen_material()
 	_setup_screen_touch()
+	_setup_additional_screen_touch()
 	_setup_undo_buttons()
-	for ui in [player_one_ui, player_two_ui]:
-		var deadend: Dictionary = ui["deadend"]
-		(deadend["surrender"] as Button).pressed.connect(_on_deadend_surrender.bind(ui))
-		(deadend["reshuffle"] as Button).pressed.connect(_on_deadend_reshuffle.bind(ui))
 	call_deferred("_connect_game_manager")
 
 
@@ -547,10 +553,7 @@ func _create_player_panel(parent: HBoxContainer, player_title: String) -> Dictio
 		row.add_child(count_label)
 		foundation_count_labels.append(count_label)
 
-	var deadend := _create_deadend_overlay(panel)
-
 	return {
-		"deadend": deadend,
 		"panel": panel,
 		"title": title,
 		"status": status,
@@ -635,15 +638,11 @@ func _make_screen_button(text_value: String, base: Color) -> Button:
 
 
 ## Вердикт предсказателя по полю: показать/спрятать предупреждение о тупике.
-func _on_field_verdict_changed(field_id: String, verdict: int, _info: Dictionary) -> void:
-	var ui := _ui_for_field(field_id)
-	if ui.is_empty():
-		return
-	var deadend: Dictionary = ui["deadend"]
-	var dead_now := verdict == KlondikePredictor.Verdict.DEAD_END and _is_local_field(field_id)
-	deadend["field"] = field_id
-	(deadend["root"] as Control).visible = dead_now
-	(deadend["root"] as Control).mouse_filter = Control.MOUSE_FILTER_STOP if dead_now else Control.MOUSE_FILTER_IGNORE
+func _on_field_verdict_changed(field_id: String, _verdict: int, _info: Dictionary) -> void:
+	# Статус анализа и все действия теперь находятся на AdditionalScreen,
+	# а не поверх основного табло.
+	if field_id == _get_additional_field_id():
+		_update_additional_screen()
 
 
 func _ui_for_field(field_id: String) -> Dictionary:
@@ -664,18 +663,12 @@ func _is_local_field(field_id: String) -> bool:
 	return sync.field_of_slot(sync.local_slot) == field_id
 
 
-func _on_deadend_surrender(ui: Dictionary) -> void:
-	var deadend: Dictionary = ui["deadend"]
-	(deadend["root"] as Control).visible = false
-	if game_manager != null and not str(deadend["field"]).is_empty():
-		game_manager.surrender(str(deadend["field"]))
+func _on_deadend_surrender(_ui: Dictionary = {}) -> void:
+	_on_additional_surrender_pressed()
 
 
-func _on_deadend_reshuffle(ui: Dictionary) -> void:
-	var deadend: Dictionary = ui["deadend"]
-	(deadend["root"] as Control).visible = false
-	if game_manager != null and not str(deadend["field"]).is_empty():
-		game_manager.redeal_field(str(deadend["field"]))
+func _on_deadend_reshuffle(_ui: Dictionary = {}) -> void:
+	_on_additional_deadend_reset_pressed()
 
 
 # ==================================================
@@ -685,13 +678,17 @@ var _screen_click_area: Area3D
 var _screen_mesh_instance: MeshInstance3D
 var _screen_mdt: MeshDataTool
 
+var _additional_screen_click_area: Area3D
+var _additional_screen_mesh_instance: MeshInstance3D
+var _additional_screen_mdt: MeshDataTool
+
 const SCREEN_CLICK_LAYER := 1 << 19
 
 
 ## Делает экран табло кликабельным: коллизия по мешу экрана (отдельный слой,
 ## карты и стопки её не видят) и данные меша для пересчёта точки в UV.
 func _setup_screen_touch() -> void:
-	_screen_mesh_instance = _find_screen_mesh(screen_model)
+	_screen_mesh_instance = _find_screen_mesh(screen_model, additional_screen_model, screen_surface_index)
 	if _screen_mesh_instance == null or _screen_mesh_instance.mesh == null:
 		return
 	var mesh := _screen_mesh_instance.mesh
@@ -712,43 +709,59 @@ func _setup_screen_touch() -> void:
 	_screen_mesh_instance.add_child(_screen_click_area)
 
 
-func _find_screen_mesh(node: Node) -> MeshInstance3D:
-	if node == null:
+func _find_screen_mesh(
+	node: Node,
+	excluded_subtree: Node = null,
+	surface_index: int = -1
+) -> MeshInstance3D:
+	if node == null or node == excluded_subtree:
 		return null
+	var wanted_surface := screen_surface_index if surface_index < 0 else surface_index
 	if node is MeshInstance3D and (node as MeshInstance3D).mesh != null \
-			and screen_surface_index < (node as MeshInstance3D).mesh.get_surface_count():
+			and wanted_surface < (node as MeshInstance3D).mesh.get_surface_count():
 		return node as MeshInstance3D
 	for child in node.get_children():
-		var found := _find_screen_mesh(child)
+		var found := _find_screen_mesh(child, excluded_subtree, wanted_surface)
 		if found != null:
 			return found
 	return null
 
 
 func _unhandled_input(event: InputEvent) -> void:
-	if not event is InputEventMouseButton or (event as InputEventMouseButton).button_index != MOUSE_BUTTON_LEFT:
+	var screen_position := Vector2.ZERO
+	var forwarded: InputEventMouseButton
+
+	if event is InputEventMouseButton:
+		var mouse_event := event as InputEventMouseButton
+		if mouse_event.button_index != MOUSE_BUTTON_LEFT:
+			return
+		screen_position = mouse_event.position
+		forwarded = mouse_event.duplicate() as InputEventMouseButton
+	elif event is InputEventScreenTouch:
+		var touch_event := event as InputEventScreenTouch
+		screen_position = touch_event.position
+		forwarded = InputEventMouseButton.new()
+		forwarded.button_index = MOUSE_BUTTON_LEFT
+		forwarded.pressed = touch_event.pressed
+		forwarded.button_mask = MOUSE_BUTTON_MASK_LEFT if touch_event.pressed else 0
+	else:
 		return
-	if not _any_deadend_visible():
-		return   # кликабельные элементы на табло есть только в тупике
-	var pixel: Variant = _screen_pixel_under_mouse((event as InputEventMouseButton).position)
+
+	var pixel: Variant = _additional_screen_pixel_under_mouse(screen_position)
 	if pixel == null:
 		return
-	var forwarded := (event as InputEventMouseButton).duplicate() as InputEventMouseButton
+
 	forwarded.position = pixel
 	forwarded.global_position = pixel
-	# Наведение, затем само нажатие — так Button внутри SubViewport его примет.
 	var motion := InputEventMouseMotion.new()
 	motion.position = pixel
 	motion.global_position = pixel
-	screen_viewport.push_input(motion, true)
-	screen_viewport.push_input(forwarded, true)
+	additional_screen_viewport.push_input(motion, true)
+	additional_screen_viewport.push_input(forwarded, true)
 	get_viewport().set_input_as_handled()
 
 
 func _any_deadend_visible() -> bool:
-	for ui in [player_one_ui, player_two_ui]:
-		if not ui.is_empty() and (ui["deadend"]["root"] as Control).visible:
-			return true
 	return false
 
 
@@ -776,13 +789,16 @@ func _screen_pixel_under_mouse(mouse_position: Vector2) -> Variant:
 
 ## UV точки на меше экрана: ищем треугольник, в который попала точка, и
 ## интерполируем UV по барицентрическим координатам.
-func _uv_at(local_point: Vector3) -> Variant:
+func _uv_at(local_point: Vector3, source_mdt: MeshDataTool = null) -> Variant:
+	var mdt := _screen_mdt if source_mdt == null else source_mdt
+	if mdt == null:
+		return null
 	var best_distance := INF
 	var best_uv: Variant = null
-	for face in _screen_mdt.get_face_count():
-		var a := _screen_mdt.get_vertex(_screen_mdt.get_face_vertex(face, 0))
-		var b := _screen_mdt.get_vertex(_screen_mdt.get_face_vertex(face, 1))
-		var c := _screen_mdt.get_vertex(_screen_mdt.get_face_vertex(face, 2))
+	for face in mdt.get_face_count():
+		var a := mdt.get_vertex(mdt.get_face_vertex(face, 0))
+		var b := mdt.get_vertex(mdt.get_face_vertex(face, 1))
+		var c := mdt.get_vertex(mdt.get_face_vertex(face, 2))
 		var normal := (b - a).cross(c - a)
 		if normal.length_squared() < 1e-12:
 			continue
@@ -795,17 +811,18 @@ func _uv_at(local_point: Vector3) -> Variant:
 		if bary.x < -0.001 or bary.y < -0.001 or bary.z < -0.001:
 			continue
 		best_distance = distance
-		best_uv = _screen_mdt.get_vertex_uv(_screen_mdt.get_face_vertex(face, 0)) * bary.x \
-			+ _screen_mdt.get_vertex_uv(_screen_mdt.get_face_vertex(face, 1)) * bary.y \
-			+ _screen_mdt.get_vertex_uv(_screen_mdt.get_face_vertex(face, 2)) * bary.z
+		best_uv = mdt.get_vertex_uv(mdt.get_face_vertex(face, 0)) * bary.x \
+			+ mdt.get_vertex_uv(mdt.get_face_vertex(face, 1)) * bary.y \
+			+ mdt.get_vertex_uv(mdt.get_face_vertex(face, 2)) * bary.z
 	return best_uv
 
 
 ## Тот же поворот, что в shaders/multiplayer_screen.gdshader (rotation_mode).
-func _apply_screen_rotation(uv: Vector2) -> Vector2:
+func _apply_screen_rotation(uv: Vector2, source_material: ShaderMaterial = null) -> Vector2:
+	var material := screen_material if source_material == null else source_material
 	var mode := 3
-	if screen_material != null:
-		var value: Variant = screen_material.get_shader_parameter("rotation_mode")
+	if material != null:
+		var value: Variant = material.get_shader_parameter("rotation_mode")
 		if value != null:
 			mode = int(value)
 	match mode:
@@ -1387,6 +1404,7 @@ func _flush_screen_refresh() -> void:
 	if not is_inside_tree() or game_manager == null:
 		return
 	_update_player_one()
+	_update_additional_screen()
 
 
 func _on_history_changed(_move_count: int) -> void:
@@ -1406,6 +1424,10 @@ func _connect_game_manager() -> void:
 		game_manager.board_counts_changed.connect(_on_board_counts_changed)
 	if not game_manager.history_changed.is_connected(_on_history_changed):
 		game_manager.history_changed.connect(_on_history_changed)
+	if not game_manager.hints_changed.is_connected(_on_hints_changed):
+		game_manager.hints_changed.connect(_on_hints_changed)
+	if not game_manager.hint_ready.is_connected(_on_hint_ready):
+		game_manager.hint_ready.connect(_on_hint_ready)
 	if not game_manager.statistics_changed.is_connected(_on_statistics_changed):
 		game_manager.statistics_changed.connect(_on_statistics_changed)
 	if not game_manager.deal_finished.is_connected(_on_deal_finished):
@@ -1423,6 +1445,8 @@ func _connect_game_manager() -> void:
 		mini(game_manager.history.size(), game_manager.undo_charges),
 		game_manager.undo_charges
 	)
+	_on_hints_changed(game_manager.hint_charges, game_manager.hints_used)
+	_update_additional_screen()
 
 	if not game_manager.is_dealing and not game_manager.game_finished:
 		timer_running = true
@@ -1540,6 +1564,7 @@ func _on_deal_finished() -> void:
 	if not is_inside_tree() or game_manager == null:
 		return
 	_update_player_one()
+	_update_additional_screen()
 	elapsed_time = 0.0
 	last_displayed_second = -1
 	timer_running = not game_manager.game_finished
@@ -2238,9 +2263,312 @@ func _update_time_label() -> void:
 # ==================================================
 # SCREEN MATERIAL
 # ==================================================
+
+# ==================================================
+# ADDITIONAL SCREEN — STATUS, REDEALS AND HINTS
+# ==================================================
+
+func _setup_additional_viewport() -> void:
+	additional_screen_viewport = SubViewport.new()
+	additional_screen_viewport.name = "AdditionalScreenViewport"
+	additional_screen_viewport.size = viewport_resolution
+	additional_screen_viewport.transparent_bg = false
+	additional_screen_viewport.render_target_update_mode = SubViewport.UPDATE_ALWAYS
+	add_child(additional_screen_viewport)
+
+	var root := Control.new()
+	root.name = "AdditionalScreenUI"
+	root.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	root.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	root.theme = _make_screen_theme()
+	additional_screen_viewport.add_child(root)
+
+	var background := ColorRect.new()
+	background.color = Color("#0D141D")
+	background.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	background.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	root.add_child(background)
+
+	var margin := MarginContainer.new()
+	margin.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	margin.add_theme_constant_override("margin_left", _si(22))
+	margin.add_theme_constant_override("margin_right", _si(22))
+	margin.add_theme_constant_override("margin_top", _si(18))
+	margin.add_theme_constant_override("margin_bottom", _si(18))
+	root.add_child(margin)
+
+	var content := VBoxContainer.new()
+	content.alignment = BoxContainer.ALIGNMENT_CENTER
+	content.add_theme_constant_override("separation", _si(13))
+	margin.add_child(content)
+
+	var title := _make_label("СОСТОЯНИЕ ПАРТИИ", 28, Color("#F2C35B"))
+	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	content.add_child(title)
+
+	var field_label := _make_label("ПОЛЕ: —", 15, Color("#9AAEC4"))
+	field_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	content.add_child(field_label)
+
+	var status := _make_label("ОЖИДАНИЕ АНАЛИЗА", 25, Color("#86E8CF"))
+	status.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	status.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	content.add_child(status)
+
+	var detail := _make_label("Анализ доступных ходов…", 14, Color("#C7D3E2"))
+	detail.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	detail.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	content.add_child(detail)
+
+	var reset_progress := _make_label("Обычный сброс: 0/10 ходов", 14, Color("#9AAEC4"))
+	reset_progress.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	content.add_child(reset_progress)
+
+	var actions := HBoxContainer.new()
+	actions.alignment = BoxContainer.ALIGNMENT_CENTER
+	actions.add_theme_constant_override("separation", _si(10))
+	content.add_child(actions)
+
+	var normal_reset := _make_screen_button("ОБЫЧНЫЙ СБРОС", Color("#245A4A"))
+	normal_reset.custom_minimum_size = Vector2(_s(205), _s(54))
+	actions.add_child(normal_reset)
+
+	var deadend_reset := _make_screen_button("ТУПИКОВЫЙ СБРОС · 2", Color("#70452B"))
+	deadend_reset.custom_minimum_size = Vector2(_s(205), _s(54))
+	deadend_reset.visible = false
+	actions.add_child(deadend_reset)
+
+	var hint_row := HBoxContainer.new()
+	hint_row.alignment = BoxContainer.ALIGNMENT_CENTER
+	hint_row.add_theme_constant_override("separation", _si(12))
+	content.add_child(hint_row)
+
+	var hint_button := _make_screen_button("ПОДСКАЗКА", Color("#344D78"))
+	hint_button.custom_minimum_size = Vector2(_s(205), _s(48))
+	hint_row.add_child(hint_button)
+
+	var hint_count := _make_label("Заряды: 0", 17, Color("#86E8CF"))
+	hint_count.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	hint_row.add_child(hint_count)
+
+	var hint_text := _make_label("Подсказка пока не запрашивалась.", 13, Color("#C7D3E2"))
+	hint_text.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	hint_text.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	content.add_child(hint_text)
+
+	normal_reset.pressed.connect(_on_additional_normal_reset_pressed)
+	deadend_reset.pressed.connect(_on_additional_deadend_reset_pressed)
+	hint_button.pressed.connect(_on_additional_hint_pressed)
+
+	additional_screen_ui = {
+		"root": root,
+		"field": field_label,
+		"status": status,
+		"detail": detail,
+		"reset_progress": reset_progress,
+		"normal_reset": normal_reset,
+		"deadend_reset": deadend_reset,
+		"hint_button": hint_button,
+		"hint_count": hint_count,
+		"hint_text": hint_text,
+	}
+
+
+func _get_additional_field_id() -> String:
+	if game_manager == null:
+		return GameManager.FIELD_MAIN
+	if network_session_active:
+		var sync := NetworkMatchSync.find_in(get_tree())
+		if sync != null:
+			return sync.field_of_slot(sync.local_slot)
+	if display_mode == DisplayMode.MIRRORED and is_instance_valid(player_one_stock):
+		return game_manager.get_field_id(player_one_stock)
+	if is_instance_valid(player_one_stock):
+		return game_manager.get_field_id(player_one_stock)
+	return GameManager.FIELD_MAIN
+
+
+func _update_additional_screen() -> void:
+	if additional_screen_ui.is_empty() or game_manager == null:
+		return
+
+	var field_id := _get_additional_field_id()
+	var stats := game_manager.get_field_stats(field_id)
+	var reset_cost := game_manager.get_normal_reset_undo_cost(field_id)
+	var moves_done := int(stats.get("moves", 0))
+	var history_count := game_manager.get_field_history_count(field_id)
+	var reset_ready := (
+		moves_done >= reset_cost
+		and history_count >= reset_cost
+		and game_manager.can_redeal_field(field_id, reset_cost)
+	)
+	var normal_button: Button = additional_screen_ui["normal_reset"]
+	normal_button.text = "ОБЫЧНЫЙ СБРОС · %d" % reset_cost
+	normal_button.disabled = not reset_ready
+	(additional_screen_ui["reset_progress"] as Label).text = (
+		"Обычный сброс: %d/%d ходов · отменит %d"
+		% [mini(moves_done, reset_cost), reset_cost, reset_cost]
+	)
+
+	var verdict_info: Dictionary = game_manager.field_verdicts.get(field_id, {})
+	var verdict := int(verdict_info.get("verdict", -1))
+	var status: Label = additional_screen_ui["status"]
+	var detail: Label = additional_screen_ui["detail"]
+	var deadend_button: Button = additional_screen_ui["deadend_reset"]
+	deadend_button.visible = verdict == KlondikePredictor.Verdict.DEAD_END
+	deadend_button.disabled = not game_manager.can_redeal_field(field_id, 2)
+
+	(additional_screen_ui["field"] as Label).text = "ПОЛЕ: %s" % (
+		NetworkMatchState.name_of(local_player_slot)
+		if network_session_active
+		else "1"
+	)
+
+	if game_manager.current_mode != GameManager.GameMode.KLONDIKE:
+		var can_move := game_manager.rules != null and game_manager.rules.has_moves()
+		status.text = "ХОД ДОСТУПЕН" if can_move else "НЕТ ДОСТУПНЫХ ХОДОВ"
+		detail.text = "Подробный анализ и подсказки доступны в Клондайке."
+		deadend_button.visible = false
+		normal_button.disabled = true
+	else:
+		match verdict:
+			KlondikePredictor.Verdict.PROGRESS:
+				if bool(verdict_info.get("uncertain", false)):
+					status.text = "ПРОВЕРКА НЕ ЗАВЕРШЕНА"
+					status.add_theme_color_override("font_color", Color("#F2C35B"))
+					detail.text = "Поиск достиг лимита. Тупик пока не подтверждён."
+				else:
+					status.text = "ХОД ВОЗМОЖЕН"
+					status.add_theme_color_override("font_color", Color("#86E8CF"))
+					detail.text = "Найдена последовательность ходов, ведущая к продвижению."
+			KlondikePredictor.Verdict.STUCK_RECOVERABLE:
+				status.text = "МОЖНО ВОССТАНОВИТЬ"
+				status.add_theme_color_override("font_color", Color("#F2C35B"))
+				detail.text = "Для возвращения к продвижению нужно отменить ходов: %d." % int(verdict_info.get("undo_steps_needed", 0))
+			KlondikePredictor.Verdict.DEAD_END:
+				status.text = "ТУПИК"
+				status.add_theme_color_override("font_color", Color("#FF8A6B"))
+				detail.text = "Продвижения не найдено. Можно отменить 2 хода и перетасовать поле или сдаться."
+			KlondikePredictor.Verdict.WON:
+				status.text = "ПОЛЕ СОБРАНО"
+				status.add_theme_color_override("font_color", Color("#86E8CF"))
+				detail.text = "Все карты этого поля находятся в основаниях."
+			_:
+				status.text = "АНАЛИЗИРУЮ ПОЛЕ…"
+				status.add_theme_color_override("font_color", Color("#9AAEC4"))
+				detail.text = "Проверяю доступные последовательности ходов."
+
+	var hints_left := game_manager.hint_charges
+	var hint_button: Button = additional_screen_ui["hint_button"]
+	hint_button.disabled = (
+		game_manager.game_finished
+		or game_manager.is_dealing
+		or hints_left <= 0
+		or game_manager.current_mode != GameManager.GameMode.KLONDIKE
+	)
+	(additional_screen_ui["hint_count"] as Label).text = "Заряды подсказок: %d" % hints_left
+
+
+func _on_additional_normal_reset_pressed() -> void:
+	if game_manager == null or game_manager.game_finished or game_manager.is_dealing:
+		return
+	var field_id := _get_additional_field_id()
+	var undo_steps := game_manager.get_normal_reset_undo_cost(field_id)
+	if game_manager.redeal_field(field_id, undo_steps, true):
+		(additional_screen_ui["hint_text"] as Label).text = "Поле перетасовано. Обычный сброс выполнен."
+
+
+func _on_additional_deadend_reset_pressed() -> void:
+	if game_manager == null or game_manager.game_finished or game_manager.is_dealing:
+		return
+	var field_id := _get_additional_field_id()
+	if game_manager.redeal_field(field_id, 2, false):
+		(additional_screen_ui["hint_text"] as Label).text = "Тупиковый сброс выполнен: отменены 2 хода."
+
+
+func _on_additional_surrender_pressed() -> void:
+	if game_manager == null or game_manager.game_finished:
+		return
+	game_manager.surrender(_get_additional_field_id())
+
+
+func _on_additional_hint_pressed() -> void:
+	if game_manager == null:
+		return
+	var entries := game_manager.request_hint(_get_additional_field_id())
+	if entries.is_empty():
+		(additional_screen_ui["hint_text"] as Label).text = "Подходящая подсказка не найдена."
+	_update_additional_screen()
+
+
+func _on_hints_changed(charges: int, used: int) -> void:
+	if additional_screen_ui.is_empty():
+		return
+	(additional_screen_ui["hint_count"] as Label).text = "Заряды подсказок: %d · использовано %d" % [charges, used]
+	_update_additional_screen()
+
+
+func _on_hint_ready(field_id: String, entries: Array) -> void:
+	if field_id != _get_additional_field_id() or additional_screen_ui.is_empty():
+		return
+	var lines: PackedStringArray = []
+	for entry_variant in entries:
+		if entry_variant is Dictionary:
+			lines.append(str(entry_variant.get("text", "Ход")))
+	(additional_screen_ui["hint_text"] as Label).text = "\n".join(lines) if not lines.is_empty() else "Подсказка не найдена."
+	_update_additional_screen()
+
+
+func _setup_additional_screen_touch() -> void:
+	_additional_screen_mesh_instance = _find_screen_mesh(additional_screen_model)
+	if _additional_screen_mesh_instance == null or _additional_screen_mesh_instance.mesh == null:
+		return
+	var mesh := _additional_screen_mesh_instance.mesh
+	if not mesh is ArrayMesh or additional_screen_surface_index >= mesh.get_surface_count():
+		return
+	_additional_screen_mdt = MeshDataTool.new()
+	if _additional_screen_mdt.create_from_surface(mesh as ArrayMesh, additional_screen_surface_index) != OK:
+		_additional_screen_mdt = null
+		return
+	_additional_screen_click_area = Area3D.new()
+	_additional_screen_click_area.name = "AdditionalScreenTouchArea"
+	_additional_screen_click_area.collision_layer = SCREEN_CLICK_LAYER
+	_additional_screen_click_area.collision_mask = 0
+	_additional_screen_click_area.monitoring = false
+	var shape := CollisionShape3D.new()
+	shape.shape = mesh.create_trimesh_shape()
+	_additional_screen_click_area.add_child(shape)
+	_additional_screen_mesh_instance.add_child(_additional_screen_click_area)
+
+
+func _additional_screen_pixel_under_mouse(mouse_position: Vector2) -> Variant:
+	if _additional_screen_mdt == null or not is_instance_valid(_additional_screen_click_area):
+		return null
+	var camera := get_viewport().get_camera_3d()
+	if camera == null:
+		return null
+	var origin := camera.project_ray_origin(mouse_position)
+	var query := PhysicsRayQueryParameters3D.create(
+		origin,
+		origin + camera.project_ray_normal(mouse_position) * 100.0,
+		SCREEN_CLICK_LAYER
+	)
+	query.collide_with_areas = true
+	query.collide_with_bodies = false
+	var hit := get_world_3d().direct_space_state.intersect_ray(query)
+	if hit.is_empty() or hit.get("collider") != _additional_screen_click_area:
+		return null
+	var local := _additional_screen_mesh_instance.global_transform.affine_inverse() * (hit["position"] as Vector3)
+	var uv: Variant = _uv_at(local, _additional_screen_mdt)
+	if uv == null:
+		return null
+	var screen_uv := _apply_screen_rotation(uv, additional_screen_material)
+	return Vector2(screen_uv.x * viewport_resolution.x, screen_uv.y * viewport_resolution.y)
+
+
 func _setup_screen_material() -> void:
 	if screen_model == null:
-		push_warning("Screens: не назначена модель экрана.")
+		push_warning("Screens: не назначена модель основного экрана.")
 		return
 
 	screen_material = ShaderMaterial.new()
@@ -2249,14 +2577,51 @@ func _setup_screen_material() -> void:
 	screen_material.set_shader_parameter("emission_energy", emission_energy)
 	screen_material.set_shader_parameter("rotate_clockwise", rotate_clockwise)
 
-	var applied := _apply_screen_material(screen_model, screen_surface_index, screen_material)
+	var applied := _apply_screen_material(
+		screen_model,
+		screen_surface_index,
+		screen_material,
+		additional_screen_model
+	)
 	if applied == 0:
-		push_warning("Screens: не удалось назначить материал. Проверь модель и индекс поверхности.")
+		push_warning("Screens: не удалось назначить материал основного экрана. Проверь модель и индекс поверхности.")
 	else:
-		print("Screens: материал назначен. Мешей: ", applied)
+		print("Screens: материал основного экрана назначен. Мешей: ", applied)
 
 
-func _apply_screen_material(node: Node, surface_index: int, material: Material) -> int:
+func _setup_additional_screen_material() -> void:
+	if additional_screen_model == null:
+		push_warning("Screens: не назначена модель AdditionalScreen.")
+		return
+	if additional_screen_viewport == null:
+		return
+
+	additional_screen_material = ShaderMaterial.new()
+	additional_screen_material.shader = SCREEN_SHADER
+	additional_screen_material.set_shader_parameter("screen_texture", additional_screen_viewport.get_texture())
+	additional_screen_material.set_shader_parameter("emission_energy", emission_energy)
+	additional_screen_material.set_shader_parameter("rotate_clockwise", rotate_clockwise)
+
+	var applied := _apply_screen_material(
+		additional_screen_model,
+		additional_screen_surface_index,
+		additional_screen_material
+	)
+	if applied == 0:
+		push_warning("Screens: не удалось назначить материал AdditionalScreen. Проверь модель и индекс поверхности.")
+	else:
+		print("Screens: материал AdditionalScreen назначен. Мешей: ", applied)
+
+
+func _apply_screen_material(
+	node: Node,
+	surface_index: int,
+	material: Material,
+	excluded_subtree: Node = null
+) -> int:
+	if node == null or node == excluded_subtree:
+		return 0
+
 	var applied := 0
 	if node is MeshInstance3D:
 		var mesh_instance := node as MeshInstance3D
@@ -2265,5 +2630,5 @@ func _apply_screen_material(node: Node, surface_index: int, material: Material) 
 			applied += 1
 
 	for child in node.get_children():
-		applied += _apply_screen_material(child, surface_index, material)
+		applied += _apply_screen_material(child, surface_index, material, excluded_subtree)
 	return applied
