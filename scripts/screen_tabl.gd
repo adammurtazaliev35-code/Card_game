@@ -41,6 +41,8 @@ const FOUNDATION_RANKS := [
 @export var classic_rotation_degrees := Vector3.ZERO
 ## Куда перемещать второе табло в одиночном классическом режиме.
 ## Укажи координату за пределами видимой области, если его нужно убрать.
+## Включи после настройки координаты второго табло для классического режима.
+@export var move_screen_rig_2_in_classic := false
 @export var classic_position_2 := Vector3.ZERO
 @export var classic_rotation_degrees_2 := Vector3.ZERO
 
@@ -232,10 +234,10 @@ func _apply_display_transform() -> void:
 			screen_rig.rotation_degrees = default_screen_rotation
 
 	if is_instance_valid(screen_rig_2):
-		if is_classic:
+		if is_classic and move_screen_rig_2_in_classic:
 			screen_rig_2.position = classic_position_2
 			screen_rig_2.rotation_degrees = classic_rotation_degrees_2
-		elif screen_2_default_saved:
+		elif not is_classic and screen_2_default_saved:
 			screen_rig_2.position = default_screen_position_2
 			screen_rig_2.rotation_degrees = default_screen_rotation_2
 
