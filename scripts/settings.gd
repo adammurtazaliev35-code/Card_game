@@ -15,6 +15,11 @@ var _track_label: Label
 var _theme_status: Label
 var _theme_buttons: Dictionary = {}
 var _display_selector: OptionButton
+var _voice_volume: HSlider
+var _voice_sensitivity: HSlider
+var _voice_quality: OptionButton
+var _voice_key_button: Button
+var _capturing_voice_key := false
 
 
 func _ready() -> void:
@@ -62,6 +67,25 @@ func _build_tabs() -> void:
 	_music = _add_slider(audio_page, "Музыка", GameSettings.music_volume, _on_music_changed, Callable())
 	_add_track_row(audio_page)
 	_sfx = _add_slider(audio_page, "Движение карт", GameSettings.sfx_volume, _on_sfx_changed, _on_sfx_released)
+
+	audio_page.add_child(_label("ГОЛОСОВАЯ СВЯЗЬ", 22, GameSettings.get_color("gold")))
+	_voice_volume = _add_slider(audio_page, "Громкость собеседника", GameSettings.voice_volume, _on_voice_volume_changed, Callable())
+	_voice_sensitivity = _add_slider(
+		audio_page, "Чувствительность микрофона", GameSettings.voice_input_threshold,
+		_on_voice_sensitivity_changed, Callable(), 0.001, 0.1, 0.001
+	)
+	_add_voice_quality_selector(audio_page)
+	if GameSettings.is_voice_key_binding_supported():
+		_voice_key_button = _button(_voice_key_text(), _on_voice_key_capture_pressed)
+		_voice_key_button.custom_minimum_size = Vector2(260, 46)
+		audio_page.add_child(_voice_key_button)
+		var ptt_hint := _label("Удерживай выбранную клавишу, чтобы говорить.", 14, GameSettings.get_color("muted"))
+		ptt_hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		audio_page.add_child(ptt_hint)
+	else:
+		var mobile_hint := _label("На мобильном клавиша не назначается: используй экранную кнопку микрофона в партии.", 15, GameSettings.get_color("muted"))
+		mobile_hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		audio_page.add_child(mobile_hint)
 
 	if show_camera_options:
 		_look = CheckBox.new()
@@ -188,6 +212,14 @@ func refresh() -> void:
 		_look.set_pressed_no_signal(GameSettings.mouse_look)
 	if _display_selector != null:
 		_display_selector.select(maxi(0, GameSettings.DISPLAY_MODES.find(GameSettings.display_mode)))
+	if _voice_volume != null:
+		_voice_volume.set_value_no_signal(GameSettings.voice_volume)
+	if _voice_sensitivity != null:
+		_voice_sensitivity.set_value_no_signal(GameSettings.voice_input_threshold)
+	if _voice_quality != null:
+		_voice_quality.select(clampi(GameSettings.voice_quality, 0, 3))
+	if _voice_key_button != null and not _capturing_voice_key:
+		_voice_key_button.text = _voice_key_text()
 	_refresh_track_label()
 	_refresh_theme_cards()
 	GameSettings.apply_palette_tree(get_tree().root)
@@ -241,6 +273,70 @@ func _on_sfx_released() -> void:
 	GameAudio.card(get_tree())
 
 
+func _on_voice_volume_changed(value: float) -> void:
+	GameSettings.voice_volume = clampf(value, 0.0, 1.0)
+	GameSettings.save()
+
+
+func _on_voice_sensitivity_changed(value: float) -> void:
+	GameSettings.voice_input_threshold = clampf(value, 0.001, 0.1)
+	GameSettings.save()
+
+
+func _add_voice_quality_selector(parent: VBoxContainer) -> void:
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 14)
+	var caption := _label("Качество голоса", 21, GameSettings.get_color("text"))
+	caption.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
+	caption.custom_minimum_size = Vector2(160, 0)
+	row.add_child(caption)
+	_voice_quality = OptionButton.new()
+	_voice_quality.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_voice_quality.custom_minimum_size = Vector2(220, 44)
+	_voice_quality.add_item("Очень высокое")
+	_voice_quality.add_item("Высокое")
+	_voice_quality.add_item("Среднее")
+	_voice_quality.add_item("Низкое")
+	_voice_quality.select(clampi(GameSettings.voice_quality, 0, 3))
+	_voice_quality.item_selected.connect(func(index: int):
+		GameSettings.voice_quality = clampi(index, 0, 3)
+		GameSettings.save()
+	)
+	GameSettings.apply_option_button_palette(_voice_quality)
+	row.add_child(_voice_quality)
+	parent.add_child(row)
+
+
+func _voice_key_text() -> String:
+	return "Клавиша микрофона: %s" % OS.get_keycode_string(GameSettings.voice_ptt_keycode)
+
+
+func _on_voice_key_capture_pressed() -> void:
+	_capturing_voice_key = true
+	if _voice_key_button != null:
+		_voice_key_button.text = "НАЖМИ НОВУЮ КЛАВИШУ..."
+
+
+func _unhandled_key_input(event: InputEvent) -> void:
+	if not _capturing_voice_key or not event is InputEventKey:
+		return
+	var key_event := event as InputEventKey
+	if not key_event.pressed or key_event.echo:
+		return
+	if key_event.keycode == KEY_ESCAPE:
+		_capturing_voice_key = false
+		if _voice_key_button != null:
+			_voice_key_button.text = _voice_key_text()
+		get_viewport().set_input_as_handled()
+		return
+	var keycode := int(key_event.physical_keycode if key_event.physical_keycode != 0 else key_event.keycode)
+	GameSettings.set_voice_ptt_key(keycode)
+	_capturing_voice_key = false
+	if _voice_key_button != null:
+		_voice_key_button.text = _voice_key_text()
+	get_viewport().set_input_as_handled()
+
+
 ## Track selector: ◀ name ▶.
 func _add_track_row(parent: VBoxContainer) -> void:
 	var audio := GameAudio.get_instance(get_tree())
@@ -292,7 +388,10 @@ func _small_button(text: String, on_press: Callable) -> Button:
 	return b
 
 
-func _add_slider(parent: VBoxContainer, caption: String, value: float, on_change: Callable, on_release: Callable) -> HSlider:
+func _add_slider(
+	parent: VBoxContainer, caption: String, value: float,	on_change: Callable, on_release: Callable,
+	minimum: float = 0.0, maximum: float = 1.0, step_value: float = 0.01
+) -> HSlider:
 	var row := HBoxContainer.new()
 	row.add_theme_constant_override("separation", 14)
 	var label := _label(caption, 21, GameSettings.get_color("text"))
@@ -300,9 +399,9 @@ func _add_slider(parent: VBoxContainer, caption: String, value: float, on_change
 	label.custom_minimum_size = Vector2(160, 0)
 	row.add_child(label)
 	var slider := HSlider.new()
-	slider.min_value = 0.0
-	slider.max_value = 1.0
-	slider.step = 0.01
+	slider.min_value = minimum
+	slider.max_value = maximum
+	slider.step = step_value
 	slider.value = value
 	slider.custom_minimum_size = Vector2(250, 30)
 	slider.size_flags_horizontal = Control.SIZE_EXPAND_FILL
