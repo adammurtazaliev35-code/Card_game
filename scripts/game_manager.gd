@@ -141,9 +141,28 @@ func get_normal_reset_undo_cost(field_id: String) -> int:
 
 
 func can_redeal_field(field_id: String, undo_steps: int) -> bool:
-	if game_finished or is_dealing or not rules is KlondikeRules:
+	if game_finished or is_dealing or not rules is KlondikeRules or undo_steps <= 0:
 		return false
-	return undo_steps > 0 and get_field_history_count(field_id) >= undo_steps
+
+	var field_history := get_field_history(field_id)
+	if field_history.size() < undo_steps:
+		return false
+
+	# В зеркальной сетевой партии можно сбрасывать только своё поле.
+	var sync := NetworkMatchSync.find_in(get_tree())
+	if sync != null:
+		if sync.is_split_ownership() and field_id != sync.field_of_slot(sync.local_slot):
+			return false
+		# До начала сброса проверяем все записи, чтобы бесплатный Undo
+		# не остановился посередине из-за чужой карты/стопки.
+		for i in range(field_history.size() - undo_steps, field_history.size()):
+			for step in field_history[i].steps:
+				var card: Card = step["card"]
+				if is_instance_valid(card) and card.pile is Pile \
+						and not sync.can_local_interact(card.pile):
+					return false
+
+	return true
 
 
 ## Поле хода — по исходной стопке первой перенесённой карты.
