@@ -105,8 +105,7 @@ static func _upload_cloud_stats() -> void:
 		)
 		if response_code != ENUMS.ACCOUNT_DOCUMENT_SET_RESPONSE_CODE.SUCCESS:
 			push_warning(
-				"GameStatistics: облачная запись GD-Sync не выполнена. Код ответа: %d. "
-				+ "Проверь вход в аккаунт и привязку базы данных к API-ключу."
+				"GameStatistics: облачная запись GD-Sync не выполнена. Код ответа: %d. Проверь вход в аккаунт и привязку базы данных к API-ключу."
 				% response_code
 			)
 			break
