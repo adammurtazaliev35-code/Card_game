@@ -174,6 +174,7 @@ func _on_game_lost(_winner_field: String) -> void:
 	_block_gameplay_mouse()
 	await get_tree().create_timer(victory_show_delay).timeout
 	if is_inside_tree():
+		_leave_lobby_for_results()
 		_show_victory_window()
 
 
@@ -311,7 +312,14 @@ func _on_game_won() -> void:
 	if not is_inside_tree():
 		return
 
+	_leave_lobby_for_results()
 	_show_victory_window()
+
+
+func _leave_lobby_for_results() -> void:
+	var sync := NetworkMatchSync.find_in(get_tree())
+	if sync != null:
+		sync.leave_lobby_for_results()
 
 
 func _block_gameplay_mouse() -> void:
