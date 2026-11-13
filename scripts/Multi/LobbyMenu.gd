@@ -728,11 +728,7 @@ func _connection_failure_text(error: int) -> String:
 func _on_disconnected() -> void:
 	_remove_local_lan_lobby_cache(_current_lobby_name)
 	_connected = false
-	NetworkMatchState.active = false
-	NetworkMatchState.player_one_name = "Игрок 1"
-	NetworkMatchState.player_two_name = "Игрок 2"
-	NetworkMatchState.player_one_id = -1
-	NetworkMatchState.player_two_id = -1
+	NetworkMatchState.clear()
 	_in_lobby = false
 	_current_lobby_name = ""
 	_room_players.clear()
@@ -940,8 +936,8 @@ func _refresh_room_ui() -> void:
 			var client_id := int(ids[slot_index])
 			var entry: Dictionary = _room_players[client_id]
 			var player_color: Color = entry.get("color", GameSettings.get_color("text"))
-			var role := "ХОЗЯИН" if player_color.is_equal_approx(_host_color()) else "ГОСТЬ"
-			_player_labels[slot_index].text = "%s\n%s" % [str(entry.get("name", "Игрок")), role]
+			# Роль не выводим: цвет PlayerColor может пережить смену комнаты/хозяина.
+			_player_labels[slot_index].text = str(entry.get("name", "Игрок"))
 			_player_labels[slot_index].add_theme_color_override("font_color", player_color)
 		else:
 			_player_labels[slot_index].text = "Игрок %d\nОжидание…" % (slot_index + 1)
@@ -1142,12 +1138,9 @@ func _leave_room() -> void:
 		if GDSync.is_host():
 			GDSync.lobby_erase_data("NetworkMatch")
 		GDSync.player_erase_data("NetworkMatchActive")
-		NetworkMatchState.active = false
-		NetworkMatchState.player_one_name = "Игрок 1"
-		NetworkMatchState.player_two_name = "Игрок 2"
-		NetworkMatchState.player_one_id = -1
-		NetworkMatchState.player_two_id = -1
 		GDSync.lobby_leave()
+	# Очищаем состояние независимо от флага _in_lobby: он тоже может устареть.
+	NetworkMatchState.clear()
 	_in_lobby = false
 	_current_lobby_name = ""
 	_room_players.clear()
@@ -1166,11 +1159,7 @@ func _return_to_main_menu() -> void:
 
 func _on_kicked(reason: String) -> void:
 	_remove_local_lan_lobby_cache(_current_lobby_name)
-	NetworkMatchState.active = false
-	NetworkMatchState.player_one_name = "Игрок 1"
-	NetworkMatchState.player_two_name = "Игрок 2"
-	NetworkMatchState.player_one_id = -1
-	NetworkMatchState.player_two_id = -1
+	NetworkMatchState.clear()
 	_in_lobby = false
 	_current_lobby_name = ""
 	_room_players.clear()
