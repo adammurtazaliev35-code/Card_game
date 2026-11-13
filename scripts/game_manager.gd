@@ -400,13 +400,14 @@ func undo(use_charge: bool = true, field_id: String = "") -> bool:
 	history.remove_at(record_index)
 	if use_charge:
 		undo_charges -= 1
+		# Счётчик ручных отмен увеличивается только от действия игрока.
+		undo_count += 1
 
-	# Оба вида отмены остаются частью статистики ходов и отмен.
-	undo_count += 1
 	moves_count = maxi(0, moves_count - 1)
 	var undo_field := _record_field(record)
 	_add_field_stat(undo_field, "moves", -1)
-	_add_field_stat(undo_field, "undos", 1)
+	if use_charge:
+		_add_field_stat(undo_field, "undos", 1)
 
 	for i in range(record.steps.size() - 1, -1, -1):
 		var s: Dictionary = record.steps[i]
