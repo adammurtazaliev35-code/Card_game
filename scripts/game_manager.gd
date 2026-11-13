@@ -625,6 +625,17 @@ func _redeal_field(field_id: String, undo_steps: int, count_normal_reset: bool) 
 	tableau.sort_custom(func(a: Pile, b: Pile) -> bool:
 		return KlondikePredictor._marker_number(a) < KlondikePredictor._marker_number(b))
 
+	# Проверяем доступность всех отмен до первой операции, чтобы сетевой отказ
+	# не оставил частично отменённую партию без последующей перетасовки.
+	var sync := NetworkMatchSync.find_in(get_tree())
+	if sync != null:
+		for history_index in range(history.size() - undo_steps, history.size()):
+			for step in history[history_index].steps:
+				var step_card: Card = step["card"]
+				if is_instance_valid(step_card) and step_card.pile is Pile \
+						and not sync.can_local_interact(step_card.pile):
+					return false
+
 	# Отменяем требуемое число записей обычной истории без расходования зарядов.
 	# Все изменения карт, статистики и сетевые сигналы проходят через undo().
 	for step_index in range(undo_steps):
