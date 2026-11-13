@@ -1370,6 +1370,11 @@ func _apply_material_rotation(uv: Vector2, material: ShaderMaterial) -> Vector2:
 		var value: Variant = material.get_shader_parameter("rotation_mode")
 		if value != null:
 			mode = int(value)
+		else:
+			# Совместимость с материалами, где поворот задан только bool-параметром.
+			var clockwise: Variant = material.get_shader_parameter("rotate_clockwise")
+			if clockwise != null and not bool(clockwise):
+				mode = 0
 	match mode:
 		1:
 			return Vector2(uv.y, 1.0 - uv.x)
