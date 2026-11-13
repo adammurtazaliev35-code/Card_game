@@ -36,8 +36,8 @@ const FOUNDATION_RANKS := [
 ## Полная сборка первого табло. Координаты применяются в однополевой раскладке,
 ## независимо от того, запущен Клондайк, Паук или другой режим.
 @export var screen_rig: Node3D
-@export var single_player_position := Vector3.ZERO
-@export var single_player_rotation_degrees := Vector3.ZERO
+@export var single_board_position := Vector3.ZERO
+@export var single_board_rotation_degrees := Vector3.ZERO
 
 @export_group("Положение второго табло — одиночная раскладка")
 ## Полная сборка второго табло. В однополевой раскладке оно перемещается
@@ -123,10 +123,10 @@ func _ready() -> void:
 	add_to_group("screens")
 
 	# Переносим старые настройки ригов, чтобы обновление скрипта не сбросило координаты.
-	if single_player_position == Vector3.ZERO and classic_position != Vector3.ZERO:
-		single_player_position = classic_position
-	if single_player_rotation_degrees == Vector3.ZERO and classic_rotation_degrees != Vector3.ZERO:
-		single_player_rotation_degrees = classic_rotation_degrees
+	if single_board_position == Vector3.ZERO and classic_position != Vector3.ZERO:
+		single_board_position = classic_position
+	if single_board_rotation_degrees == Vector3.ZERO and classic_rotation_degrees != Vector3.ZERO:
+		single_board_rotation_degrees = classic_rotation_degrees
 	if second_board_hidden_position == Vector3.ZERO and single_player_position_2 != Vector3.ZERO:
 		second_board_hidden_position = single_player_position_2
 	if second_board_hidden_rotation_degrees == Vector3.ZERO and single_player_rotation_degrees_2 != Vector3.ZERO:
@@ -218,8 +218,8 @@ func _apply_display_transform() -> void:
 
 	if is_instance_valid(screen_rig):
 		if single_board_layout:
-			screen_rig.position = single_player_position
-			screen_rig.rotation_degrees = single_player_rotation_degrees
+			screen_rig.position = single_board_position
+			screen_rig.rotation_degrees = single_board_rotation_degrees
 		elif screen_default_saved:
 			screen_rig.position = default_screen_position
 			screen_rig.rotation_degrees = default_screen_rotation
