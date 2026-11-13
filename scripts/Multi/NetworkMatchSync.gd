@@ -180,6 +180,9 @@ func _send_snapshot() -> void:
 	var piles_data := {}
 	for pile in _local_scope_piles():
 		piles_data[_pile_key(pile)] = _encode_pile(pile)
+	var undo_history_count := game_manager.history.size()
+	if is_split_ownership():
+		undo_history_count = game_manager.get_field_history_count(field_of_slot(local_slot))
 	var payload := {
 		"v": SNAPSHOT_VERSION,
 		"seq": _send_seq,
@@ -188,7 +191,7 @@ func _send_snapshot() -> void:
 		"stats": {
 			"moves": game_manager.moves_count,
 			"undos": game_manager.undo_count,
-			"available": mini(game_manager.history.size(), game_manager.undo_charges),
+			"available": mini(undo_history_count, game_manager.undo_charges),
 			"charges": game_manager.undo_charges,
 		},
 	}
