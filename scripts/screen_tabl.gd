@@ -482,7 +482,12 @@ func _setup_additional_screen_material() -> void:
 		material.set_shader_parameter("emission_energy", additional_emission_energy)
 		material.set_shader_parameter("rotate_clockwise", additional_rotate_clockwise)
 		entry["material"] = material
-		var applied := _apply_screen_material(entry["model"], additional_screen_surface_index, material)
+		var applied := _apply_screen_material(
+			entry["model"],
+			additional_screen_surface_index,
+			material,
+			true
+		)
 		additional_screen_entries[i] = entry
 		if applied == 0:
 			push_warning("Screens: не удалось назначить материал AdditionalScreen P%d." % int(entry["slot"]))
@@ -2831,8 +2836,13 @@ func _setup_screen_material() -> void:
 	else:
 		print("Screens: основной материал назначен. Мешей: ", total_applied)
 
-func _apply_screen_material(node: Node, surface_index: int, material: Material) -> int:
-	if node == null or _is_additional_screen_root(node):
+func _apply_screen_material(
+	node: Node,
+	surface_index: int,
+	material: Material,
+	allow_additional_root: bool = false
+) -> int:
+	if node == null or (not allow_additional_root and _is_additional_screen_root(node)):
 		return 0
 	var applied := 0
 	if node is MeshInstance3D:
@@ -2841,6 +2851,6 @@ func _apply_screen_material(node: Node, surface_index: int, material: Material) 
 			mesh_instance.set_surface_override_material(surface_index, material)
 			applied += 1
 	for child in node.get_children():
-		applied += _apply_screen_material(child, surface_index, material)
+		applied += _apply_screen_material(child, surface_index, material, false)
 	return applied
 
