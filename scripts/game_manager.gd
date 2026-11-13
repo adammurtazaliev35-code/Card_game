@@ -642,9 +642,7 @@ func redeal_field(
 	if not can_redeal_field(field_id, undo_steps):
 		return false
 	if count_as_normal_reset:
-		var normal_cost := get_normal_reset_undo_cost(field_id)
-		var stats := get_field_stats(field_id)
-		if undo_steps != normal_cost or int(stats["moves"]) < normal_cost:
+		if undo_steps != get_normal_reset_undo_cost(field_id):
 			return false
 	elif undo_steps != 2:
 		return false
