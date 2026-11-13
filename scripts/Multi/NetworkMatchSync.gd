@@ -546,7 +546,7 @@ func _receive_rematch_invitation(requester_slot: int, request_id: int) -> void:
 
 
 func _receive_rematch_response(responder_slot: int, request_id: int, accepted: bool) -> void:
-	if not is_network_match() or not GDSync.is_host():
+	if not is_network_match():
 		return
 	if responder_slot != get_opponent_slot() or request_id != _rematch_outgoing_id:
 		return
@@ -556,7 +556,12 @@ func _receive_rematch_response(responder_slot: int, request_id: int, accepted: b
 		_rematch_outgoing_id = 0
 		rematch_state_changed.emit("DECLINED", "Соперник отклонил приглашение.")
 		return
-	_start_rematch_as_host()
+	# Положительный ответ запускает матч только на хосте. Если ответ пришёл
+	# гостю, это лишь подтверждение встречного запроса; хост пришлёт Start.
+	if GDSync.is_host():
+		_start_rematch_as_host()
+	else:
+		rematch_state_changed.emit("WAITING", "Согласие получено. Ожидаем запуск от хоста.")
 
 
 func _receive_rematch_cancel(sender_slot: int, request_id: int) -> void:
@@ -600,6 +605,7 @@ func _receive_rematch_start(seed_value: int, mode: int, draw: int, suits: int) -
 func _apply_rematch_start(seed_value: int, mode: int, draw: int, suits: int) -> void:
 	if _rematch_scene_started or not is_network_match():
 		return
+	rematch_state_changed.emit("STARTING", "Соперник согласился. Запускаем новую партию.")
 	if mode not in [GameSession.MODE_KLONDIKE, GameSession.MODE_SPIDER]:
 		push_warning("NetworkMatchSync: получен неизвестный режим новой партии.")
 		return
