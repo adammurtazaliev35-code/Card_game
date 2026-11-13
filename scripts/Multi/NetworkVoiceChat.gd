@@ -18,6 +18,7 @@ var _last_quality := -1
 
 func _ready() -> void:
 	process_mode = Node.PROCESS_MODE_ALWAYS
+	set_process(true)
 	call_deferred("_setup_voice_nodes")
 
 
