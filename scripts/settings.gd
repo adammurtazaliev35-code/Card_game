@@ -24,6 +24,7 @@ var _capturing_voice_key := false
 
 func _ready() -> void:
 	GameSettings.ensure_loaded()
+	set_process_unhandled_key_input(true)
 	add_theme_constant_override("separation", 14)
 	_build_tabs()
 	_back = _button("Назад", _on_back)
@@ -68,25 +69,6 @@ func _build_tabs() -> void:
 	_add_track_row(audio_page)
 	_sfx = _add_slider(audio_page, "Движение карт", GameSettings.sfx_volume, _on_sfx_changed, _on_sfx_released)
 
-	audio_page.add_child(_label("ГОЛОСОВАЯ СВЯЗЬ", 22, GameSettings.get_color("gold")))
-	_voice_volume = _add_slider(audio_page, "Громкость собеседника", GameSettings.voice_volume, _on_voice_volume_changed, Callable())
-	_voice_sensitivity = _add_slider(
-		audio_page, "Чувствительность микрофона", GameSettings.voice_input_threshold,
-		_on_voice_sensitivity_changed, Callable(), 0.001, 0.1, 0.001
-	)
-	_add_voice_quality_selector(audio_page)
-	if GameSettings.is_voice_key_binding_supported():
-		_voice_key_button = _button(_voice_key_text(), _on_voice_key_capture_pressed)
-		_voice_key_button.custom_minimum_size = Vector2(260, 46)
-		audio_page.add_child(_voice_key_button)
-		var ptt_hint := _label("Удерживай выбранную клавишу, чтобы говорить.", 14, GameSettings.get_color("muted"))
-		ptt_hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-		audio_page.add_child(ptt_hint)
-	else:
-		var mobile_hint := _label("На мобильном клавиша не назначается: используй экранную кнопку микрофона в партии.", 15, GameSettings.get_color("muted"))
-		mobile_hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-		audio_page.add_child(mobile_hint)
-
 	if show_camera_options:
 		_look = CheckBox.new()
 		_look.text = "Камера следует за мышью"
@@ -102,6 +84,38 @@ func _build_tabs() -> void:
 		hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		hint.custom_minimum_size = Vector2(480, 0)
 		audio_page.add_child(hint)
+
+	var voice_page := VBoxContainer.new()
+	voice_page.name = "Голосовой чат"
+	_prepare_tab_page(tabs, voice_page)
+	voice_page.add_theme_constant_override("separation", 16)
+	voice_page.add_child(_label("ГОЛОСОВАЯ СВЯЗЬ", 22, GameSettings.get_color("gold")))
+	var voice_description := _label(
+		"Настрой передачу микрофона и громкость голоса второго игрока.", 14,
+		GameSettings.get_color("muted")
+	)
+	voice_description.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	voice_page.add_child(voice_description)
+	_voice_volume = _add_slider(
+		voice_page, "Громкость собеседника", GameSettings.voice_volume,
+		_on_voice_volume_changed, Callable()
+	)
+	_voice_sensitivity = _add_slider(
+		voice_page, "Чувствительность микрофона", GameSettings.voice_input_threshold,
+		_on_voice_sensitivity_changed, Callable(), 0.001, 0.1, 0.001
+	)
+	_add_voice_quality_selector(voice_page)
+	if GameSettings.is_voice_key_binding_supported():
+		_voice_key_button = _button(_voice_key_text(), _on_voice_key_capture_pressed)
+		_voice_key_button.custom_minimum_size = Vector2(260, 46)
+		voice_page.add_child(_voice_key_button)
+		var ptt_hint := _label("Удерживай выбранную клавишу, чтобы говорить.", 14, GameSettings.get_color("muted"))
+		ptt_hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		voice_page.add_child(ptt_hint)
+	else:
+		var mobile_hint := _label("На мобильном клавиша не назначается: используй экранную кнопку микрофона в партии.", 15, GameSettings.get_color("muted"))
+		mobile_hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		voice_page.add_child(mobile_hint)
 
 	if GameSettings.is_display_mode_supported():
 		var display_page := VBoxContainer.new()
