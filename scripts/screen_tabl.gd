@@ -468,6 +468,7 @@ func _get_additional_field_id() -> String:
 	return fields[0] if not fields.is_empty() else ""
 
 
+
 func _refresh_additional_screen() -> void:
 	if additional_screen_ui.is_empty() or game_manager == null:
 		return
@@ -484,10 +485,32 @@ func _refresh_additional_screen() -> void:
 	if field_id.is_empty():
 		status.text = "ПОЛЕ НЕ НАЙДЕНО"
 		detail.text = "Не удалось определить поле текущего игрока."
+		normal_reset.visible = false
+		deadend_reset.visible = false
+		hint_button.visible = false
+		surrender.visible = false
+		return
+
+	if game_manager.game_finished:
+		status.text = "ПАРТИЯ ЗАВЕРШЕНА"
+		if not game_manager.surrendered_field.is_empty():
+			detail.text = (
+				"Вы сдались."
+				if game_manager.surrendered_field == field_id
+				else "Соперник сдался."
+			)
+		elif not game_manager.winner_field.is_empty():
+			detail.text = (
+				"Ваше поле победило."
+				if game_manager.winner_field == field_id
+				else "Соперник завершил своё поле первым."
+			)
+		else:
+			detail.text = "Партия завершена."
 		normal_reset.disabled = true
 		deadend_reset.visible = false
-		hint_button.disabled = true
 		surrender.visible = false
+		hint_button.disabled = true
 		return
 
 	if not game_manager.rules is KlondikeRules:
@@ -531,26 +554,21 @@ func _refresh_additional_screen() -> void:
 	counter.text = "ОБЫЧНЫЕ СБРОСЫ: %d · СЛЕДУЮЩИЙ: %d ХОДОВ" % [reset_count, reset_cost]
 	normal_reset.text = "ОБЫЧНЫЙ СБРОС · %d" % reset_cost
 	normal_reset.disabled = (
-		game_manager.game_finished
-		or game_manager.is_dealing
+		game_manager.is_dealing
 		or game_manager.history.size() < reset_cost
 	)
 	deadend_reset.visible = verdict == KlondikePredictor.Verdict.DEAD_END
 	surrender.visible = verdict == KlondikePredictor.Verdict.DEAD_END
 	deadend_reset.disabled = (
-		game_manager.game_finished
-		or game_manager.is_dealing
+		game_manager.is_dealing
 		or game_manager.history.size() < 2
 	)
-	surrender.disabled = game_manager.game_finished or game_manager.is_dealing
+	surrender.disabled = game_manager.is_dealing
 	hint_button.disabled = (
-		game_manager.game_finished
-		or game_manager.is_dealing
+		game_manager.is_dealing
 		or game_manager.hint_charges <= 0
 	)
 	hint_button.text = "ПОДСКАЗКА · %d" % game_manager.hint_charges
-
-
 func _on_additional_normal_reset() -> void:
 	if game_manager == null:
 		return
@@ -1796,6 +1814,8 @@ func _connect_game_manager() -> void:
 		game_manager.deal_finished.connect(_on_deal_finished)
 	if not game_manager.game_won.is_connected(_on_game_won):
 		game_manager.game_won.connect(_on_game_won)
+	if not game_manager.game_lost.is_connected(_on_game_lost):
+		game_manager.game_lost.connect(_on_game_lost)
 	if not game_manager.field_verdict_changed.is_connected(_on_field_verdict_changed):
 		game_manager.field_verdict_changed.connect(_on_field_verdict_changed)
 	if not game_manager.hints_changed.is_connected(_on_hints_changed):
@@ -1932,6 +1952,7 @@ func _on_deal_finished() -> void:
 	timer_running = not game_manager.game_finished
 	_update_time_label()
 	_refresh_additional_screen()
+
 func _on_game_won() -> void:
 	timer_running = false
 	if not ring_ui.is_empty():
@@ -1941,11 +1962,12 @@ func _on_game_won() -> void:
 	if display_mode == DisplayMode.MULTIPLAYER and not player_two_ui.is_empty():
 		player_two_ui["status"].text = "ПОБЕДА"
 	_update_time_label()
+	_refresh_additional_screen()
 
 
-# ==================================================
-# PILE LOOKUP / FIELD FILTERING
-# ==================================================
+func _on_game_lost(_winner_field: String) -> void:
+	timer_running = false
+	_refresh_additional_screen()
 func _get_trailing_number(value: String) -> int:
 	var regex := RegEx.new()
 	regex.compile("([0-9]+)$")
