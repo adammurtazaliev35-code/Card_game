@@ -58,10 +58,19 @@ func _setup_voice_nodes() -> void:
 		_output_players.append(output)
 		if not _has_property(voice, "_output_player"):
 			push_warning("NetworkVoiceChat: у VoiceChat отсутствует свойство _output_player.")
-		else:
-			voice.set("_output_player", output)
+			continue
+		voice.set("_output_player", output)
 		voice.set("spatial_mode", 0)
 		GDSync.set_gdsync_owner(voice, peer_id)
+
+		# VoiceChat._ready() disables processing when Output Player was None.
+		# The scene node is already inside the tree here, so complete the
+		# plugin's own setup explicitly after assigning the output player.
+		if peer_id == int(GDSync.get_client_id()):
+			voice.call("_configure_input")
+		else:
+			voice.call("_configure_output")
+		voice.set_process(true)
 		_configure_input_device(voice)
 		if voice.has_method("mute_microphone"):
 			voice.call("mute_microphone")
@@ -94,7 +103,7 @@ func _has_property(object: Object, property_name: String) -> bool:
 
 
 func _configure_input_device(voice: Node) -> void:
-	var devices: Array = voice.call("get_input_devices")
+	var devices: PackedStringArray = voice.call("get_input_devices")
 	if devices.is_empty():
 		push_warning("NetworkVoiceChat: GD-Sync не обнаружил устройство записи.")
 		return
