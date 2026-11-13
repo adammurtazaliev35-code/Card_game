@@ -460,6 +460,20 @@ func _on_client_joined(client_id: int) -> void:
 			_send_snapshot()
 
 
+## Вызывается из окна итогов перед переходом в меню или запуском новой локальной партии.
+## GD-Sync автоматически удалит комнату, когда её покинут все участники.
+func leave_finished_lobby() -> void:
+	if GDSync.is_active() and NetworkMatchState.active:
+		if GDSync.is_host():
+			GDSync.lobby_erase_data("NetworkMatch")
+		GDSync.player_erase_data("NetworkMatchActive")
+		GDSync.lobby_leave()
+
+	NetworkMatchState.clear()
+	opponent_connected = false
+	_emit_session_state()
+
+
 func _on_disconnected() -> void:
 	opponent_connected = false
 	_emit_session_state()
