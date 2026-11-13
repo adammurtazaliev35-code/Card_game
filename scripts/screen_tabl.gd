@@ -2338,6 +2338,11 @@ func _setup_additional_viewport() -> void:
 	deadend_reset.visible = false
 	actions.add_child(deadend_reset)
 
+	var surrender := _make_screen_button("СДАТЬСЯ", Color("#6E2A22"))
+	surrender.custom_minimum_size = Vector2(_s(150), _s(54))
+	surrender.visible = false
+	actions.add_child(surrender)
+
 	var hint_row := HBoxContainer.new()
 	hint_row.alignment = BoxContainer.ALIGNMENT_CENTER
 	hint_row.add_theme_constant_override("separation", _si(12))
@@ -2358,6 +2363,7 @@ func _setup_additional_viewport() -> void:
 
 	normal_reset.pressed.connect(_on_additional_normal_reset_pressed)
 	deadend_reset.pressed.connect(_on_additional_deadend_reset_pressed)
+	surrender.pressed.connect(_on_additional_surrender_pressed)
 	hint_button.pressed.connect(_on_additional_hint_pressed)
 
 	additional_screen_ui = {
@@ -2368,6 +2374,7 @@ func _setup_additional_viewport() -> void:
 		"reset_progress": reset_progress,
 		"normal_reset": normal_reset,
 		"deadend_reset": deadend_reset,
+		"surrender": surrender,
 		"hint_button": hint_button,
 		"hint_count": hint_count,
 		"hint_text": hint_text,
@@ -2415,8 +2422,11 @@ func _update_additional_screen() -> void:
 	var status: Label = additional_screen_ui["status"]
 	var detail: Label = additional_screen_ui["detail"]
 	var deadend_button: Button = additional_screen_ui["deadend_reset"]
+	var surrender_button: Button = additional_screen_ui["surrender"]
 	deadend_button.visible = verdict == KlondikePredictor.Verdict.DEAD_END
 	deadend_button.disabled = not game_manager.can_redeal_field(field_id, 2)
+	surrender_button.visible = verdict == KlondikePredictor.Verdict.DEAD_END
+	surrender_button.disabled = game_manager.game_finished
 
 	(additional_screen_ui["field"] as Label).text = "ПОЛЕ: %s" % (
 		NetworkMatchState.name_of(local_player_slot)
@@ -2520,7 +2530,11 @@ func _on_hint_ready(field_id: String, entries: Array) -> void:
 
 
 func _setup_additional_screen_touch() -> void:
-	_additional_screen_mesh_instance = _find_screen_mesh(additional_screen_model)
+	_additional_screen_mesh_instance = _find_screen_mesh(
+		additional_screen_model,
+		null,
+		additional_screen_surface_index
+	)
 	if _additional_screen_mesh_instance == null or _additional_screen_mesh_instance.mesh == null:
 		return
 	var mesh := _additional_screen_mesh_instance.mesh
