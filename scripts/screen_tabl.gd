@@ -75,7 +75,7 @@ const FOUNDATION_RANKS := [
 @export_range(0, 10, 1) var additional_screen_surface_index := 1
 @export_range(0.1, 3.0, 0.1) var additional_emission_energy := 1.3
 @export var additional_rotate_clockwise := true
-@export var additional_viewport_resolution := Vector2i(1024, 512)
+@export var additional_viewport_resolution := Vector2i(512, 1024)
 
 ## Старые ссылки сохраняются для чтения значений из уже сохранённых сцен.
 @export_storage var screen_model: Node3D
@@ -140,6 +140,11 @@ func _ready() -> void:
 		default_screen_position_2 = screen_rig_2.position
 		default_screen_rotation_2 = screen_rig_2.rotation_degrees
 		screen_default_saved_2 = true
+
+	# AdditionalScreen физически выполнен в портретном формате телефона.
+	# Старые сцены сохраняли 1024x512, поэтому автоматически меняем их на 512x1024.
+	if additional_viewport_resolution.x > additional_viewport_resolution.y:
+		additional_viewport_resolution = Vector2i(512, 1024)
 
 	# Старые сцены могли ссылаться на отдельный MeshInstance3D через одиночные поля.
 	if main_screen_models.is_empty() and screen_model is MeshInstance3D:
@@ -430,72 +435,141 @@ func _setup_additional_viewports() -> void:
 		})
 
 func _build_additional_screen_ui(viewport: SubViewport, slot: int) -> Dictionary:
+	# Логический дизайн рассчитан на портретный экран 512x1024.
+	# Поэтому размер шрифта не уменьшается вдвое, как происходило при базе 1024x512.
 	var previous_scale := ui_scale
-	ui_scale = minf(float(viewport.size.x) / 1024.0, float(viewport.size.y) / 512.0)
+	ui_scale = minf(
+		float(viewport.size.x) / 512.0,
+		float(viewport.size.y) / 1024.0
+	)
+
 	var root := Control.new()
 	root.name = "AdditionalScreenUI_P%d" % slot
 	root.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	root.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	root.theme = _make_screen_theme()
 	viewport.add_child(root)
+
 	var background := ColorRect.new()
 	background.color = Color("#0D141D")
 	background.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	background.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	root.add_child(background)
+
 	var margin := MarginContainer.new()
 	margin.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	margin.add_theme_constant_override("margin_left", _si(28))
-	margin.add_theme_constant_override("margin_right", _si(28))
-	margin.add_theme_constant_override("margin_top", _si(22))
-	margin.add_theme_constant_override("margin_bottom", _si(18))
+	margin.add_theme_constant_override("margin_left", _si(22))
+	margin.add_theme_constant_override("margin_right", _si(22))
+	margin.add_theme_constant_override("margin_top", _si(26))
+	margin.add_theme_constant_override("margin_bottom", _si(24))
 	root.add_child(margin)
+
 	var column := VBoxContainer.new()
-	column.add_theme_constant_override("separation", _si(12))
+	column.add_theme_constant_override("separation", _si(14))
 	margin.add_child(column)
-	var title := _make_label("СОСТОЯНИЕ ПОЛЯ %d" % slot, 24, Color("#F2C35B"))
+
+	var title := _make_label("ИГРОК %d" % slot, 25, Color("#F2C35B"))
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	title.custom_minimum_size.y = _s(34)
 	column.add_child(title)
-	var status := _make_label("ОЖИДАНИЕ АНАЛИЗА", 32, Color("#86E8CF"))
+
+	var status_panel := PanelContainer.new()
+	status_panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	status_panel.custom_minimum_size.y = _s(112)
+	var status_style := StyleBoxFlat.new()
+	status_style.bg_color = Color("#152B38")
+	status_style.border_color = Color("#4B8E82")
+	status_style.set_border_width_all(_si(2))
+	status_style.set_corner_radius_all(_si(12))
+	status_style.content_margin_left = _s(12)
+	status_style.content_margin_right = _s(12)
+	status_style.content_margin_top = _s(10)
+	status_style.content_margin_bottom = _s(10)
+	status_panel.add_theme_stylebox_override("panel", status_style)
+	column.add_child(status_panel)
+
+	var status := _make_label("ОЖИДАНИЕ АНАЛИЗА", 34, Color("#86E8CF"))
 	status.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	column.add_child(status)
-	var detail := _make_label("После раздачи здесь появится оценка текущей позиции.", 16, Color("#D5DFEA"))
+	status.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	status.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	status_panel.add_child(status)
+
+	var detail := _make_label(
+		"После раздачи здесь появится оценка текущей позиции.",
+		21,
+		Color("#D5DFEA")
+	)
 	detail.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	detail.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	detail.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	detail.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	detail.custom_minimum_size.y = _s(150)
 	column.add_child(detail)
-	var hint_output := _make_label("Подсказка появится здесь.", 14, Color("#C6A9EE"))
+
+	var hint_panel := PanelContainer.new()
+	hint_panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	hint_panel.custom_minimum_size.y = _s(104)
+	var hint_style := StyleBoxFlat.new()
+	hint_style.bg_color = Color("#201D32")
+	hint_style.border_color = Color("#55457B")
+	hint_style.set_border_width_all(_si(1))
+	hint_style.set_corner_radius_all(_si(10))
+	hint_style.content_margin_left = _s(12)
+	hint_style.content_margin_right = _s(12)
+	hint_style.content_margin_top = _s(8)
+	hint_style.content_margin_bottom = _s(8)
+	hint_panel.add_theme_stylebox_override("panel", hint_style)
+	column.add_child(hint_panel)
+
+	var hint_output := _make_label("Подсказка появится здесь.", 18, Color("#D8C8F2"))
 	hint_output.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	hint_output.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	hint_output.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	column.add_child(hint_output)
-	var counter := _make_label("ОБЫЧНЫЕ СБРОСЫ: 0 · СЛЕДУЮЩИЙ: 10 ХОДОВ", 13, Color("#9AAEC4"))
+	hint_panel.add_child(hint_output)
+
+	var counter := _make_label(
+		"СБРОСЫ: 0  ·  СЛЕДУЮЩИЙ: 10 ХОДОВ",
+		16,
+		Color("#AFC0D4")
+	)
 	counter.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	counter.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	column.add_child(counter)
-	var buttons := GridContainer.new()
-	buttons.columns = 2
-	buttons.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
-	buttons.add_theme_constant_override("h_separation", _si(12))
-	buttons.add_theme_constant_override("v_separation", _si(8))
+
+	var buttons := VBoxContainer.new()
+	buttons.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	buttons.add_theme_constant_override("separation", _si(10))
 	column.add_child(buttons)
+
 	var normal_reset := _make_screen_button("ОБЫЧНЫЙ СБРОС", Color("#245A4A"))
-	var deadend_reset := _make_screen_button("ТУПИКОВЫЙ СБРОС · 2", Color("#6E4B22"))
 	var hint_button := _make_screen_button("ПОДСКАЗКА", Color("#44366D"))
+	var deadend_reset := _make_screen_button("ТУПИКОВЫЙ СБРОС · 2 ХОДА", Color("#6E4B22"))
 	var surrender := _make_screen_button("СДАТЬСЯ", Color("#6E2A22"))
-	buttons.add_child(normal_reset)
-	buttons.add_child(deadend_reset)
-	buttons.add_child(hint_button)
-	buttons.add_child(surrender)
+
+	for button in [normal_reset, hint_button, deadend_reset, surrender]:
+		button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		button.custom_minimum_size = Vector2(0, _s(72))
+		button.add_theme_font_size_override("font_size", _si(19))
+		button.add_theme_constant_override("h_separation", _si(8))
+		buttons.add_child(button)
+
 	normal_reset.pressed.connect(_on_additional_normal_reset.bind(slot))
 	deadend_reset.pressed.connect(_on_additional_deadend_reset.bind(slot))
 	hint_button.pressed.connect(_on_additional_hint.bind(slot))
 	surrender.pressed.connect(_on_additional_surrender.bind(slot))
+
 	ui_scale = previous_scale
 	return {
-		"title": title, "status": status, "detail": detail, "hint_output": hint_output,
-		"counter": counter, "normal_reset": normal_reset, "deadend_reset": deadend_reset,
-		"hint_button": hint_button, "surrender": surrender
+		"title": title,
+		"status": status,
+		"detail": detail,
+		"hint_output": hint_output,
+		"counter": counter,
+		"normal_reset": normal_reset,
+		"deadend_reset": deadend_reset,
+		"hint_button": hint_button,
+		"surrender": surrender
 	}
-
 
 func _setup_additional_screen_material() -> void:
 	for i in range(additional_screen_entries.size()):
