@@ -46,6 +46,8 @@ const FOUNDATION_RANKS := [
 @export_range(3.0, 5.0, 1.0) var score_loss_interval := 4.0
 
 @export_group("Модель основного экрана")
+## Корневой узел одной или нескольких моделей основных экранов.
+## Один и тот же экранный интерфейс будет назначен на все подходящие дочерние MeshInstance3D.
 @export var screen_model: Node3D
 @export_range(0, 10, 1) var screen_surface_index := 1
 @export_range(0.1, 3.0, 0.1) var emission_energy := 1.3
@@ -345,10 +347,22 @@ func _si(value: float) -> int:
 
 
 
+
 func _setup_additional_viewport() -> void:
+	# Масштаб AdditionalScreen независим от основного табло.
+	var previous_scale := ui_scale
+	var safe_resolution := Vector2i(
+		maxi(1, additional_viewport_resolution.x),
+		maxi(1, additional_viewport_resolution.y)
+	)
+	ui_scale = minf(
+		float(safe_resolution.x) / 1024.0,
+		float(safe_resolution.y) / 512.0
+	)
+
 	additional_screen_viewport = SubViewport.new()
 	additional_screen_viewport.name = "AdditionalScreenViewport"
-	additional_screen_viewport.size = additional_viewport_resolution
+	additional_screen_viewport.size = safe_resolution
 	additional_screen_viewport.transparent_bg = false
 	additional_screen_viewport.render_target_update_mode = SubViewport.UPDATE_ALWAYS
 	add_child(additional_screen_viewport)
@@ -368,14 +382,14 @@ func _setup_additional_viewport() -> void:
 
 	var margin := MarginContainer.new()
 	margin.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	margin.add_theme_constant_override("margin_left", 28)
-	margin.add_theme_constant_override("margin_right", 28)
-	margin.add_theme_constant_override("margin_top", 22)
-	margin.add_theme_constant_override("margin_bottom", 18)
+	margin.add_theme_constant_override("margin_left", _si(28))
+	margin.add_theme_constant_override("margin_right", _si(28))
+	margin.add_theme_constant_override("margin_top", _si(22))
+	margin.add_theme_constant_override("margin_bottom", _si(18))
 	root.add_child(margin)
 
 	var column := VBoxContainer.new()
-	column.add_theme_constant_override("separation", 12)
+	column.add_theme_constant_override("separation", _si(12))
 	margin.add_child(column)
 
 	var title := _make_label("СОСТОЯНИЕ ПАРТИИ", 24, Color("#F2C35B"))
@@ -401,9 +415,12 @@ func _setup_additional_viewport() -> void:
 	counter.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	column.add_child(counter)
 
-	var buttons := HBoxContainer.new()
-	buttons.alignment = BoxContainer.ALIGNMENT_CENTER
-	buttons.add_theme_constant_override("separation", 12)
+	# Сетка 2x2 остаётся доступной и на более узких дополнительных дисплеях.
+	var buttons := GridContainer.new()
+	buttons.columns = 2
+	buttons.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	buttons.add_theme_constant_override("h_separation", _si(12))
+	buttons.add_theme_constant_override("v_separation", _si(8))
 	column.add_child(buttons)
 
 	var normal_reset := _make_screen_button("ОБЫЧНЫЙ СБРОС", Color("#245A4A"))
@@ -431,7 +448,7 @@ func _setup_additional_viewport() -> void:
 		"surrender": surrender
 	}
 
-
+	ui_scale = previous_scale
 func _setup_additional_screen_material() -> void:
 	if additional_screen_model == null:
 		push_warning("Screens: не назначена модель AdditionalScreen. Назначь дочерний узел AdditionalScreen в инспекторе.")
@@ -986,6 +1003,24 @@ func _on_deadend_reshuffle(ui: Dictionary) -> void:
 		game_manager.deadend_reset_field(str(deadend["field"]))
 		_refresh_additional_screen()
 
+# ==================================================
+# 3D SCREEN INPUT
+# ==================================================
+var _screen_click_area: Area3D
+var _screen_mesh_instance: MeshInstance3D
+var _screen_mdt: MeshDataTool
+
+var _additional_screen_click_area: Area3D
+var _additional_screen_mesh_instance: MeshInstance3D
+var _additional_screen_mdt: MeshDataTool
+
+# Pointer -> {"screen": "main"|"additional", "pixel": Vector2}
+var _screen_pointer_routes: Dictionary = {}
+
+const SCREEN_CLICK_LAYER := 1 << 19
+const ADDITIONAL_SCREEN_CLICK_LAYER := 1 << 20
+
+
 func _setup_screen_touch() -> void:
 	_screen_mesh_instance = _find_screen_mesh(screen_model)
 	if _screen_mesh_instance == null or _screen_mesh_instance.mesh == null:
@@ -1061,40 +1096,77 @@ func _find_screen_mesh_for_surface(node: Node, surface_index: int) -> MeshInstan
 			return found
 	return null
 
+
 func _unhandled_input(event: InputEvent) -> void:
-	var screen_position := Vector2.ZERO
-	var pressed := false
+	var pointer_key := ""
+	var pointer_position := Vector2.ZERO
+	var is_pressed := false
+
 	if event is InputEventMouseButton:
 		var mouse_event := event as InputEventMouseButton
 		if mouse_event.button_index != MOUSE_BUTTON_LEFT:
 			return
-		screen_position = mouse_event.position
-		pressed = mouse_event.pressed
+		pointer_key = "mouse_left"
+		pointer_position = mouse_event.position
+		is_pressed = mouse_event.pressed
 	elif event is InputEventScreenTouch:
 		var touch_event := event as InputEventScreenTouch
-		screen_position = touch_event.position
-		pressed = touch_event.pressed
+		pointer_key = "touch_%d" % touch_event.index
+		pointer_position = touch_event.position
+		is_pressed = touch_event.pressed
 	else:
 		return
 
-	if not pressed:
-		return
-
-	# AdditionalScreen всегда принимает нажатия по своим экранным кнопкам.
-	var additional_pixel: Variant = _additional_screen_pixel_under_mouse(screen_position)
-	if additional_pixel != null:
-		_forward_input_to_viewport(event, additional_pixel, additional_screen_viewport)
-		get_viewport().set_input_as_handled()
-		return
-
-	# Старый основной экран сохраняет поддержку существующего оверлея, если он используется.
-	if _any_deadend_visible() and event is InputEventMouseButton:
-		var pixel: Variant = _screen_pixel_under_mouse(screen_position)
-		if pixel == null:
+	if is_pressed:
+		if _screen_pointer_routes.has(pointer_key):
 			return
-		_forward_input_to_viewport(event, pixel, screen_viewport)
-		get_viewport().set_input_as_handled()
 
+		# AdditionalScreen является основным интерактивным дисплеем.
+		var additional_pixel: Variant = _additional_screen_pixel_under_mouse(pointer_position)
+		if additional_pixel != null:
+			_screen_pointer_routes[pointer_key] = {
+				"screen": "additional",
+				"pixel": additional_pixel
+			}
+			_forward_input_to_viewport(event, additional_pixel, additional_screen_viewport)
+			get_viewport().set_input_as_handled()
+			return
+
+		# Совместимость со старым оверлеем основного экрана.
+		if _any_deadend_visible() and event is InputEventMouseButton:
+			var main_pixel: Variant = _screen_pixel_under_mouse(pointer_position)
+			if main_pixel != null:
+				_screen_pointer_routes[pointer_key] = {
+					"screen": "main",
+					"pixel": main_pixel
+				}
+				_forward_input_to_viewport(event, main_pixel, screen_viewport)
+				get_viewport().set_input_as_handled()
+		return
+
+	# Отправляем отпускание в тот же SubViewport, куда ушло нажатие.
+	# Без release Godot Button не генерирует pressed.
+	if not _screen_pointer_routes.has(pointer_key):
+		return
+	var route: Dictionary = _screen_pointer_routes[pointer_key]
+	var target_screen := str(route.get("screen", "additional"))
+	var release_pixel: Variant = null
+	if target_screen == "additional":
+		release_pixel = _additional_screen_pixel_under_mouse(pointer_position)
+	else:
+		release_pixel = _screen_pixel_under_mouse(pointer_position)
+
+	# Если отпустили вне исходного дисплея — отправляем release вне Control,
+	# чтобы кнопка корректно сняла нажатое состояние без ложного клика.
+	if release_pixel == null:
+		release_pixel = Vector2(-100.0, -100.0)
+
+	var target_viewport: SubViewport = (
+		additional_screen_viewport if target_screen == "additional" else screen_viewport
+	)
+	_forward_input_to_viewport(event, release_pixel, target_viewport)
+	_screen_pointer_routes.erase(pointer_key)
+	get_viewport().set_input_as_handled()
 
 func _forward_input_to_viewport(event: InputEvent, pixel: Vector2, target_viewport: SubViewport) -> void:
 	if target_viewport == null:
@@ -2647,9 +2719,10 @@ func _update_time_label() -> void:
 # SCREEN MATERIAL
 # ==================================================
 
+
 func _setup_screen_material() -> void:
 	if screen_model == null:
-		push_warning("Screens: не назначена модель основного экрана.")
+		push_warning("Screens: не назначен корневой узел основных экранов.")
 		return
 
 	screen_material = ShaderMaterial.new()
@@ -2658,12 +2731,28 @@ func _setup_screen_material() -> void:
 	screen_material.set_shader_parameter("emission_energy", emission_energy)
 	screen_material.set_shader_parameter("rotate_clockwise", rotate_clockwise)
 
-	var applied := _apply_screen_material(screen_model, screen_surface_index, screen_material)
+	# screen_model может быть родителем двух физических экранов:
+	# один viewport/материал назначается всем подходящим дочерним мешам.
+	var applied := _apply_screen_material(
+		screen_model,
+		screen_surface_index,
+		screen_material,
+		additional_screen_model
+	)
 	if applied == 0:
-		push_warning("Screens: не удалось назначить материал. Проверь модель и индекс поверхности.")
+		push_warning("Screens: не удалось назначить основной материал. Проверь корневой узел и индекс поверхности.")
 	else:
-		print("Screens: основной материал назначен. Мешей: ", applied)
-func _apply_screen_material(node: Node, surface_index: int, material: Material) -> int:
+		print("Screens: основной материал назначен на экранные меши: ", applied)
+
+func _apply_screen_material(
+	node: Node,
+	surface_index: int,
+	material: Material,
+	exclude_node: Node = null
+) -> int:
+	if node == null or node == exclude_node:
+		return 0
+
 	var applied := 0
 	if node is MeshInstance3D:
 		var mesh_instance := node as MeshInstance3D
@@ -2672,5 +2761,5 @@ func _apply_screen_material(node: Node, surface_index: int, material: Material) 
 			applied += 1
 
 	for child in node.get_children():
-		applied += _apply_screen_material(child, surface_index, material)
+		applied += _apply_screen_material(child, surface_index, material, exclude_node)
 	return applied
