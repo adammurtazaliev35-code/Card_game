@@ -2171,6 +2171,10 @@ func _update_time_label() -> void:
 # ==================================================
 
 func _setup_additional_viewport() -> void:
+	# Не создаём второй viewport в сценах/превью, где дополнительная модель не назначена.
+	if additional_screen_model == null and not is_instance_valid(additional_screen_surface_mesh):
+		return
+
 	additional_screen_viewport = SubViewport.new()
 	additional_screen_viewport.name = "AdditionalScreenViewport"
 	additional_screen_viewport.size = viewport_resolution
@@ -2512,10 +2516,9 @@ func _setup_screen_material() -> void:
 
 
 func _setup_additional_screen_material() -> void:
-	if additional_screen_model == null and not is_instance_valid(additional_screen_surface_mesh):
-		push_warning("Screens: не назначена модель AdditionalScreen.")
-		return
 	if additional_screen_viewport == null:
+		return
+	if additional_screen_model == null and not is_instance_valid(additional_screen_surface_mesh):
 		return
 
 	additional_screen_material = ShaderMaterial.new()
