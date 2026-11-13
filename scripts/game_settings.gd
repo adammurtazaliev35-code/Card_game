@@ -6,6 +6,7 @@ extends RefCounted
 const PATH := "user://settings.cfg"
 const BUS_MUSIC := "Music"
 const BUS_SFX := "SFX"
+const VOICE_PTT_ACTION := "voice_push_to_talk"
 
 const DISPLAY_MODE_WINDOWED := "windowed"
 const DISPLAY_MODE_BORDERLESS := "borderless"
@@ -106,6 +107,12 @@ static var mouse_look := true
 static var music_track := ""
 static var palette_id := "classic"
 static var display_mode := DISPLAY_MODE_WINDOWED
+static var voice_volume := 0.8
+## input_volume_threshold: меньшее значение делает микрофон чувствительнее.
+static var voice_input_threshold := 0.01
+## GD-Sync: 0 = очень высокое качество, 3 = низкое.
+static var voice_quality := 2
+static var voice_ptt_keycode: int = KEY_V
 static var _loaded := false
 static var _windowed_rect_saved := false
 static var _saved_window_size := Vector2i.ZERO
@@ -125,6 +132,10 @@ static func ensure_loaded() -> void:
 		mouse_look = bool(cfg.get_value("camera", "mouse_look", mouse_look))
 		music_track = str(cfg.get_value("audio", "track", music_track))
 		palette_id = str(cfg.get_value("visual", "palette", palette_id))
+		voice_volume = clampf(float(cfg.get_value("voice", "volume", voice_volume)), 0.0, 1.0)
+		voice_input_threshold = clampf(float(cfg.get_value("voice", "input_threshold", voice_input_threshold)), 0.001, 0.1)
+		voice_quality = clampi(int(cfg.get_value("voice", "quality", voice_quality)), 0, 3)
+		voice_ptt_keycode = int(cfg.get_value("voice", "ptt_keycode", voice_ptt_keycode))
 		if cfg.has_section_key("display", "mode"):
 			display_mode = _normalize_display_mode(str(cfg.get_value("display", "mode", DISPLAY_MODE_WINDOWED)))
 			has_saved_display_mode = true
@@ -137,6 +148,7 @@ static func ensure_loaded() -> void:
 	_ensure_bus(BUS_MUSIC)
 	_ensure_bus(BUS_SFX)
 	apply_audio()
+	apply_voice_input()
 	if has_saved_display_mode and is_display_mode_supported():
 		_apply_display_mode(display_mode)
 
@@ -149,6 +161,10 @@ static func save() -> void:
 	cfg.set_value("audio", "track", music_track)
 	cfg.set_value("visual", "palette", palette_id)
 	cfg.set_value("display", "mode", display_mode)
+	cfg.set_value("voice", "volume", voice_volume)
+	cfg.set_value("voice", "input_threshold", voice_input_threshold)
+	cfg.set_value("voice", "quality", voice_quality)
+	cfg.set_value("voice", "ptt_keycode", voice_ptt_keycode)
 	var err := cfg.save(PATH)
 	if err != OK:
 		push_warning("GameSettings: не удалось сохранить настройки (%d)." % err)
@@ -402,6 +418,29 @@ static func _map_palette_color(value: Color) -> Color:
 			if value.is_equal_approx(source_color.lightened(0.2)):
 				return get_color(str(role)).lightened(0.2)
 	return value
+
+
+static func is_voice_key_binding_supported() -> bool:
+	return not OS.has_feature("mobile") and not OS.has_feature("web")
+
+
+static func set_voice_ptt_key(keycode: int) -> void:
+	if not is_voice_key_binding_supported() or keycode <= 0:
+		return
+	voice_ptt_keycode = keycode
+	apply_voice_input()
+	save()
+
+
+static func apply_voice_input() -> void:
+	if not InputMap.has_action(VOICE_PTT_ACTION):
+		InputMap.add_action(VOICE_PTT_ACTION)
+	InputMap.action_erase_events(VOICE_PTT_ACTION)
+	if is_voice_key_binding_supported() and voice_ptt_keycode > 0:
+		var event := InputEventKey.new()
+		event.physical_keycode = voice_ptt_keycode
+		InputMap.action_add_event(VOICE_PTT_ACTION, event)
+
 
 
 static func apply_audio() -> void:
