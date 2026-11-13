@@ -169,7 +169,7 @@ func set_network_session_state(
 
 	_refresh_undo_buttons()
 	_queue_screen_refresh()
-	_refresh_additional_screen()
+	_refresh_additional_screens()
 
 
 func request_create_lobby() -> void:
@@ -1044,7 +1044,7 @@ func _on_field_verdict_changed(field_id: String, _verdict: int, _info: Dictionar
 		var deadend: Dictionary = ui["deadend"]
 		(deadend["root"] as Control).visible = false
 		(deadend["root"] as Control).mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_refresh_additional_screen()
+	_refresh_additional_screens()
 func _ui_for_field(field_id: String) -> Dictionary:
 	if game_manager == null:
 		return {}
@@ -1076,7 +1076,7 @@ func _on_deadend_reshuffle(ui: Dictionary) -> void:
 	(deadend["root"] as Control).visible = false
 	if game_manager != null and not str(deadend["field"]).is_empty():
 		game_manager.deadend_reset_field(str(deadend["field"]))
-		_refresh_additional_screen()
+		_refresh_additional_screens()
 
 # ==================================================
 # 3D SCREEN INPUT
@@ -1085,9 +1085,7 @@ var _screen_click_area: Area3D
 var _screen_mesh_instance: MeshInstance3D
 var _screen_mdt: MeshDataTool
 
-var _additional_screen_click_area: Area3D
-var _additional_screen_mesh_instance: MeshInstance3D
-var _additional_screen_mdt: MeshDataTool
+## Touch-данные каждого AdditionalScreen хранятся в additional_screen_entries.
 
 # Pointer -> {"screen": "main"|"additional", "pixel": Vector2}
 var _screen_pointer_routes: Dictionary = {}
@@ -1097,7 +1095,10 @@ const ADDITIONAL_SCREEN_CLICK_LAYER := 1 << 20
 
 
 func _setup_screen_touch() -> void:
-	_screen_mesh_instance = _find_screen_mesh(screen_model)
+	var models := _get_main_screen_models()
+	if models.is_empty():
+		return
+	_screen_mesh_instance = _find_screen_mesh(models[0])
 	if _screen_mesh_instance == null or _screen_mesh_instance.mesh == null:
 		return
 	var mesh := _screen_mesh_instance.mesh
@@ -1117,37 +1118,35 @@ func _setup_screen_touch() -> void:
 	_screen_click_area.add_child(shape)
 	_screen_mesh_instance.add_child(_screen_click_area)
 
-
 func _setup_additional_screen_touch() -> void:
-	if additional_screen_model == null:
-		return
-	_additional_screen_mesh_instance = _find_screen_mesh_for_surface(
-		additional_screen_model,
-		additional_screen_surface_index
-	)
-	if _additional_screen_mesh_instance == null or _additional_screen_mesh_instance.mesh == null:
-		return
-	var mesh := _additional_screen_mesh_instance.mesh
-	if not mesh is ArrayMesh or additional_screen_surface_index >= mesh.get_surface_count():
-		return
-	_additional_screen_mdt = MeshDataTool.new()
-	if _additional_screen_mdt.create_from_surface(
-		mesh as ArrayMesh,
-		additional_screen_surface_index
-	) != OK:
-		_additional_screen_mdt = null
-		return
-	_additional_screen_click_area = Area3D.new()
-	_additional_screen_click_area.name = "AdditionalScreenTouchArea"
-	_additional_screen_click_area.collision_layer = ADDITIONAL_SCREEN_CLICK_LAYER
-	_additional_screen_click_area.collision_mask = 0
-	_additional_screen_click_area.monitoring = false
-	var shape := CollisionShape3D.new()
-	shape.shape = mesh.create_trimesh_shape()
-	_additional_screen_click_area.add_child(shape)
-	_additional_screen_mesh_instance.add_child(_additional_screen_click_area)
+	for i in range(additional_screen_entries.size()):
+		var entry: Dictionary = additional_screen_entries[i]
+		var mesh_instance := _find_screen_mesh_for_surface(entry["model"], additional_screen_surface_index)
+		if mesh_instance == null or mesh_instance.mesh == null:
+			push_warning("Screens: не найдена поверхность касания AdditionalScreen P%d." % int(entry["slot"]))
+			continue
+		var mesh := mesh_instance.mesh
+		if not mesh is ArrayMesh or additional_screen_surface_index >= mesh.get_surface_count():
+			continue
+		var mdt := MeshDataTool.new()
+		if mdt.create_from_surface(mesh as ArrayMesh, additional_screen_surface_index) != OK:
+			continue
+		var click_area := Area3D.new()
+		click_area.name = "AdditionalScreenTouchArea_P%d" % int(entry["slot"])
+		click_area.collision_layer = ADDITIONAL_SCREEN_CLICK_LAYER
+		click_area.collision_mask = 0
+		click_area.monitoring = false
+		var shape := CollisionShape3D.new()
+		shape.shape = mesh.create_trimesh_shape()
+		click_area.add_child(shape)
+		mesh_instance.add_child(click_area)
+		entry["mesh_instance"] = mesh_instance
+		entry["mdt"] = mdt
+		entry["click_area"] = click_area
+		additional_screen_entries[i] = entry
+
 func _find_screen_mesh(node: Node) -> MeshInstance3D:
-	if node == null or node == additional_screen_model:
+	if node == null or _is_additional_screen_root(node):
 		return null
 	if node is MeshInstance3D and (node as MeshInstance3D).mesh != null \
 			and screen_surface_index < (node as MeshInstance3D).mesh.get_surface_count():
@@ -1157,7 +1156,6 @@ func _find_screen_mesh(node: Node) -> MeshInstance3D:
 		if found != null:
 			return found
 	return null
-
 
 func _find_screen_mesh_for_surface(node: Node, surface_index: int) -> MeshInstance3D:
 	if node == null:
@@ -1176,7 +1174,6 @@ func _unhandled_input(event: InputEvent) -> void:
 	var pointer_key := ""
 	var pointer_position := Vector2.ZERO
 	var is_pressed := false
-
 	if event is InputEventMouseButton:
 		var mouse_event := event as InputEventMouseButton
 		if mouse_event.button_index != MOUSE_BUTTON_LEFT:
@@ -1195,50 +1192,39 @@ func _unhandled_input(event: InputEvent) -> void:
 	if is_pressed:
 		if _screen_pointer_routes.has(pointer_key):
 			return
-
-		# AdditionalScreen является основным интерактивным дисплеем.
-		var additional_pixel: Variant = _additional_screen_pixel_under_mouse(pointer_position)
-		if additional_pixel != null:
-			_screen_pointer_routes[pointer_key] = {
-				"screen": "additional",
-				"pixel": additional_pixel
-			}
-			_forward_input_to_viewport(event, additional_pixel, additional_screen_viewport)
-			get_viewport().set_input_as_handled()
-			return
-
-		# Совместимость со старым оверлеем основного экрана.
+		var additional_hit: Variant = _additional_screen_pixel_under_mouse(pointer_position)
+		if additional_hit != null:
+			var slot := int(additional_hit["slot"])
+			var viewport := _additional_viewport_for_slot(slot)
+			if viewport != null:
+				_screen_pointer_routes[pointer_key] = {"screen": "additional", "slot": slot}
+				_forward_input_to_viewport(event, additional_hit["pixel"], viewport)
+				get_viewport().set_input_as_handled()
+				return
 		if _any_deadend_visible() and event is InputEventMouseButton:
 			var main_pixel: Variant = _screen_pixel_under_mouse(pointer_position)
 			if main_pixel != null:
-				_screen_pointer_routes[pointer_key] = {
-					"screen": "main",
-					"pixel": main_pixel
-				}
+				_screen_pointer_routes[pointer_key] = {"screen": "main"}
 				_forward_input_to_viewport(event, main_pixel, screen_viewport)
 				get_viewport().set_input_as_handled()
 		return
 
-	# Отправляем отпускание в тот же SubViewport, куда ушло нажатие.
-	# Без release Godot Button не генерирует pressed.
 	if not _screen_pointer_routes.has(pointer_key):
 		return
 	var route: Dictionary = _screen_pointer_routes[pointer_key]
 	var target_screen := str(route.get("screen", "additional"))
 	var release_pixel: Variant = null
+	var target_viewport: SubViewport = screen_viewport
 	if target_screen == "additional":
-		release_pixel = _additional_screen_pixel_under_mouse(pointer_position)
+		var slot := int(route.get("slot", 1))
+		var release_hit: Variant = _additional_screen_pixel_under_mouse(pointer_position, slot)
+		if release_hit != null:
+			release_pixel = release_hit["pixel"]
+		target_viewport = _additional_viewport_for_slot(slot)
 	else:
 		release_pixel = _screen_pixel_under_mouse(pointer_position)
-
-	# Если отпустили вне исходного дисплея — отправляем release вне Control,
-	# чтобы кнопка корректно сняла нажатое состояние без ложного клика.
 	if release_pixel == null:
 		release_pixel = Vector2(-100.0, -100.0)
-
-	var target_viewport: SubViewport = (
-		additional_screen_viewport if target_screen == "additional" else screen_viewport
-	)
 	_forward_input_to_viewport(event, release_pixel, target_viewport)
 	_screen_pointer_routes.erase(pointer_key)
 	get_viewport().set_input_as_handled()
@@ -1292,8 +1278,11 @@ func _screen_pixel_under_mouse(mouse_position: Vector2) -> Variant:
 	return Vector2(screen_uv.x * viewport_resolution.x, screen_uv.y * viewport_resolution.y)
 
 
-func _additional_screen_pixel_under_mouse(mouse_position: Vector2) -> Variant:
-	if _additional_screen_mdt == null or not is_instance_valid(_additional_screen_click_area):
+func _additional_screen_pixel_under_mouse(
+	mouse_position: Vector2,
+	expected_slot: int = -1
+) -> Variant:
+	if additional_screen_entries.is_empty():
 		return null
 	var camera := get_viewport().get_camera_3d()
 	if camera == null:
@@ -1309,15 +1298,32 @@ func _additional_screen_pixel_under_mouse(mouse_position: Vector2) -> Variant:
 	var hit := get_world_3d().direct_space_state.intersect_ray(query)
 	if hit.is_empty():
 		return null
-	var local := _additional_screen_mesh_instance.global_transform.affine_inverse() * (hit["position"] as Vector3)
-	var uv: Variant = _uv_at_mesh(_additional_screen_mdt, local)
-	if uv == null:
-		return null
-	var screen_uv := _apply_material_rotation(uv, additional_screen_material)
-	return Vector2(
-		screen_uv.x * additional_viewport_resolution.x,
-		screen_uv.y * additional_viewport_resolution.y
-	)
+	var hit_area := hit.get("collider") as Area3D
+	for entry in additional_screen_entries:
+		var slot := int(entry.get("slot", 1))
+		if expected_slot != -1 and slot != expected_slot:
+			continue
+		if entry.get("click_area") != hit_area:
+			continue
+		var mesh_instance := entry.get("mesh_instance") as MeshInstance3D
+		var mdt := entry.get("mdt") as MeshDataTool
+		var material := entry.get("material") as ShaderMaterial
+		if not is_instance_valid(mesh_instance) or mdt == null:
+			return null
+		var local := mesh_instance.global_transform.affine_inverse() * (hit["position"] as Vector3)
+		var uv: Variant = _uv_at_mesh(mdt, local)
+		if uv == null:
+			return null
+		var screen_uv := _apply_material_rotation(uv, material)
+		return {
+			"slot": slot,
+			"pixel": Vector2(
+				screen_uv.x * additional_viewport_resolution.x,
+				screen_uv.y * additional_viewport_resolution.y
+			)
+		}
+	return null
+
 func _uv_at(local_point: Vector3) -> Variant:
 	return _uv_at_mesh(_screen_mdt, local_point)
 
@@ -1936,12 +1942,16 @@ func _flush_screen_refresh() -> void:
 	if not is_inside_tree() or game_manager == null:
 		return
 	_update_player_one()
-	_refresh_additional_screen()
+	_refresh_additional_screens()
+
 func _on_history_changed(_move_count: int) -> void:
-	if not additional_screen_ui.is_empty():
-		(additional_screen_ui["hint_output"] as Label).text = "Подсказка появится здесь."
+	for entry in additional_screen_entries:
+		var ui: Dictionary = entry.get("ui", {})
+		if not ui.is_empty():
+			(ui["hint_output"] as Label).text = "Подсказка появится здесь."
 	_queue_screen_refresh()
-	_refresh_additional_screen()
+	_refresh_additional_screens()
+
 func _connect_game_manager() -> void:
 	if game_manager_path != NodePath():
 		game_manager = get_node_or_null(game_manager_path) as GameManager
@@ -1983,7 +1993,7 @@ func _connect_game_manager() -> void:
 	if not game_manager.is_dealing and not game_manager.game_finished:
 		timer_running = true
 	_update_time_label()
-	_refresh_additional_screen()
+	_refresh_additional_screens()
 func _connect_network_sync() -> void:
 	var sync := NetworkMatchSync.find_in(get_tree())
 	if sync == null:
@@ -2068,7 +2078,7 @@ func _on_statistics_changed(
 	new_available_undos: int,
 	_new_undo_charges: int
 ) -> void:
-	_refresh_additional_screen()
+	_refresh_additional_screens()
 	if network_session_active and display_mode == DisplayMode.MULTIPLAYER:
 		# Локальная статистика относится только к своему полю.
 		var own_ui := player_one_ui if local_player_slot == 1 else player_two_ui
@@ -2106,7 +2116,7 @@ func _on_deal_finished() -> void:
 	last_displayed_second = -1
 	timer_running = not game_manager.game_finished
 	_update_time_label()
-	_refresh_additional_screen()
+	_refresh_additional_screens()
 
 func _on_game_won() -> void:
 	timer_running = false
@@ -2117,12 +2127,12 @@ func _on_game_won() -> void:
 	if display_mode == DisplayMode.MULTIPLAYER and not player_two_ui.is_empty():
 		player_two_ui["status"].text = "ПОБЕДА"
 	_update_time_label()
-	_refresh_additional_screen()
+	_refresh_additional_screens()
 
 
 func _on_game_lost(_winner_field: String) -> void:
 	timer_running = false
-	_refresh_additional_screen()
+	_refresh_additional_screens()
 func _get_trailing_number(value: String) -> int:
 	var regex := RegEx.new()
 	regex.compile("([0-9]+)$")
@@ -2804,45 +2814,33 @@ func _update_time_label() -> void:
 
 
 func _setup_screen_material() -> void:
-	if screen_model == null:
-		push_warning("Screens: не назначен корневой узел основных экранов.")
+	var models := _get_main_screen_models()
+	if models.is_empty():
+		push_warning("Screens: не назначены модели основных экранов.")
 		return
-
 	screen_material = ShaderMaterial.new()
 	screen_material.shader = SCREEN_SHADER
 	screen_material.set_shader_parameter("screen_texture", screen_viewport.get_texture())
 	screen_material.set_shader_parameter("emission_energy", emission_energy)
 	screen_material.set_shader_parameter("rotate_clockwise", rotate_clockwise)
-
-	# screen_model может быть родителем двух физических экранов:
-	# один viewport/материал назначается всем подходящим дочерним мешам.
-	var applied := _apply_screen_material(
-		screen_model,
-		screen_surface_index,
-		screen_material,
-		additional_screen_model
-	)
-	if applied == 0:
-		push_warning("Screens: не удалось назначить основной материал. Проверь корневой узел и индекс поверхности.")
+	var total_applied := 0
+	for model in models:
+		total_applied += _apply_screen_material(model, screen_surface_index, screen_material)
+	if total_applied == 0:
+		push_warning("Screens: не удалось назначить основной материал. Проверь модели и индекс поверхности.")
 	else:
-		print("Screens: основной материал назначен на экранные меши: ", applied)
+		print("Screens: основной материал назначен. Мешей: ", total_applied)
 
-func _apply_screen_material(
-	node: Node,
-	surface_index: int,
-	material: Material,
-	exclude_node: Node = null
-) -> int:
-	if node == null or node == exclude_node:
+func _apply_screen_material(node: Node, surface_index: int, material: Material) -> int:
+	if node == null or _is_additional_screen_root(node):
 		return 0
-
 	var applied := 0
 	if node is MeshInstance3D:
 		var mesh_instance := node as MeshInstance3D
 		if mesh_instance.mesh != null and surface_index < mesh_instance.mesh.get_surface_count():
 			mesh_instance.set_surface_override_material(surface_index, material)
 			applied += 1
-
 	for child in node.get_children():
-		applied += _apply_screen_material(child, surface_index, material, exclude_node)
+		applied += _apply_screen_material(child, surface_index, material)
 	return applied
+
