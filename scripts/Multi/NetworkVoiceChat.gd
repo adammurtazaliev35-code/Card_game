@@ -62,6 +62,7 @@ func _setup_voice_nodes() -> void:
 		voice.set("_output_player", output)
 		voice.set("spatial_mode", 0)
 		GDSync.set_gdsync_owner(voice, peer_id)
+		_configure_input_device(voice)
 
 		# VoiceChat._ready() disables processing when Output Player was None.
 		# The scene node is already inside the tree here, so complete the
@@ -71,7 +72,6 @@ func _setup_voice_nodes() -> void:
 		else:
 			voice.call("_configure_output")
 		voice.set_process(true)
-		_configure_input_device(voice)
 		if voice.has_method("mute_microphone"):
 			voice.call("mute_microphone")
 
