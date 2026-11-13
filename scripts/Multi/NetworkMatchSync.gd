@@ -46,6 +46,10 @@ var _rematch_incoming_id := 0
 var _rematch_incoming_slot := 0
 var _rematch_start_sent := false
 var _rematch_scene_started := false
+var _rematch_seed := 0
+var _rematch_mode := 0
+var _rematch_draw := 0
+var _rematch_suits := 0
 
 
 static func is_network_match() -> bool:
@@ -84,6 +88,7 @@ func _ready() -> void:
 	GDSync.expose_func(_receive_rematch_response)
 	GDSync.expose_func(_receive_rematch_cancel)
 	GDSync.expose_func(_receive_rematch_start)
+	GDSync.expose_func(_receive_rematch_ready)
 
 	game_manager.history_changed.connect(_on_history_changed)
 	game_manager.deal_finished.connect(_on_deal_finished)
@@ -586,16 +591,24 @@ func _start_rematch_as_host() -> void:
 	if game_manager == null:
 		push_warning("NetworkMatchSync: нельзя начать новую партию без GameManager.")
 		return
-	_rematch_start_sent = true
-	var seed_value := randi_range(1, 2147483646)
 	var mode := game_manager.current_mode
 	var draw := game_manager.draw_mode
 	var suits := game_manager.spider_suits
-	# call_func направляет событие только второму игроку; локальный запуск
-	# выполняем отдельно, чтобы сцены сменились на обоих клиентах ровно один раз.
-	GDSync.call_func(_receive_rematch_start, seed_value, mode, draw, suits)
-	rematch_state_changed.emit("STARTING", "Соперник согласился. Запускаем новую партию.")
-	call_deferred("_apply_rematch_start", seed_value, mode, draw, suits)
+	if mode not in [GameSession.MODE_KLONDIKE, GameSession.MODE_SPIDER]:
+		return
+	if draw not in [GameSession.DRAW_ONE, GameSession.DRAW_THREE]:
+		return
+
+	_rematch_start_sent = true
+	_rematch_seed = randi_range(1, 2147483646)
+	_rematch_mode = mode
+	_rematch_draw = draw
+	_rematch_suits = suits
+	_prepare_rematch_state(_rematch_seed, mode, draw, suits)
+	# Сначала передаём параметры гостю. Тот подтверждает их получение,
+	# и лишь затем хост инициирует синхронную смену сцены через GD-Sync.
+	GDSync.call_func(_receive_rematch_start, _rematch_seed, mode, draw, suits)
+	rematch_state_changed.emit("STARTING", "Согласие получено. Подготавливаем новую партию.")
 
 
 func _receive_rematch_start(seed_value: int, mode: int, draw: int, suits: int) -> void:
@@ -603,27 +616,48 @@ func _receive_rematch_start(seed_value: int, mode: int, draw: int, suits: int) -
 		return
 	if int(GDSync.get_sender_id()) != int(GDSync.get_host()):
 		return
-	_apply_rematch_start(seed_value, mode, draw, suits)
+	if not _prepare_rematch_state(seed_value, mode, draw, suits):
+		return
+	GDSync.call_func(_receive_rematch_ready, local_slot, seed_value)
 
 
-func _apply_rematch_start(seed_value: int, mode: int, draw: int, suits: int) -> void:
-	if _rematch_scene_started or not is_network_match():
+func _receive_rematch_ready(responder_slot: int, seed_value: int) -> void:
+	if not is_network_match() or not GDSync.is_host() or not _rematch_start_sent:
 		return
-	rematch_state_changed.emit("STARTING", "Соперник согласился. Запускаем новую партию.")
-	if mode not in [GameSession.MODE_KLONDIKE, GameSession.MODE_SPIDER]:
-		push_warning("NetworkMatchSync: получен неизвестный режим новой партии.")
+	if responder_slot != get_opponent_slot() or seed_value != _rematch_seed:
 		return
-	if draw not in [GameSession.DRAW_ONE, GameSession.DRAW_THREE]:
-		push_warning("NetworkMatchSync: получен неизвестный режим раздачи.")
+	if NetworkMatchState.slot_of(int(GDSync.get_sender_id())) != responder_slot:
+		return
+	if _rematch_scene_started:
 		return
 	_rematch_scene_started = true
+	# change_scene загружает сцену на всех клиентах и ждёт готовности обоих.
+	GDSync.change_scene(str(GameSession.LEVEL_SCENES[_rematch_mode]))
+
+
+func _prepare_rematch_state(seed_value: int, mode: int, draw: int, suits: int) -> bool:
+	if _rematch_scene_started or not is_network_match():
+		return false
+	if mode not in [GameSession.MODE_KLONDIKE, GameSession.MODE_SPIDER]:
+		push_warning("NetworkMatchSync: получен неизвестный режим новой партии.")
+		return false
+	if draw not in [GameSession.DRAW_ONE, GameSession.DRAW_THREE]:
+		push_warning("NetworkMatchSync: получен неизвестный режим раздачи.")
+		return false
+	_rematch_seed = seed_value
+	_rematch_mode = mode
+	_rematch_draw = draw
+	_rematch_suits = suits
 	_rematch_outgoing_id = 0
 	_rematch_incoming_id = 0
 	_rematch_incoming_slot = 0
 	NetworkMatchState.deal_seed = maxi(1, seed_value)
 	NetworkMatchState.field_decks.clear()
+	GameSession.mode = mode
+	GameSession.draw_mode = draw
+	GameSession.spider_suits = suits
 	GameSession.is_multiplayer = true
-	GameSession.start_level(get_tree(), mode, draw, suits)
+	return true
 
 
 
