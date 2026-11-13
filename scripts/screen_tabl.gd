@@ -500,24 +500,24 @@ func _build_additional_screen_ui(viewport: SubViewport, slot: int) -> Dictionary
 func _setup_additional_screen_material() -> void:
 	for i in range(additional_screen_entries.size()):
 		var entry: Dictionary = additional_screen_entries[i]
+		var mesh_instance: MeshInstance3D = entry["model"]
+		var viewport: SubViewport = entry["viewport"]
 		var material := ShaderMaterial.new()
 		material.shader = SCREEN_SHADER
-		material.set_shader_parameter("screen_texture", (entry["viewport"] as SubViewport).get_texture())
+		material.set_shader_parameter("screen_texture", viewport.get_texture())
 		material.set_shader_parameter("emission_energy", additional_emission_energy)
 		material.set_shader_parameter("rotate_clockwise", additional_rotate_clockwise)
 		entry["material"] = material
-		var applied := _apply_screen_material(
-			entry["model"],
-			additional_screen_surface_index,
-			material,
-			true
-		)
-		additional_screen_entries[i] = entry
-		if applied == 0:
-			push_warning("Screens: не удалось назначить материал AdditionalScreen P%d." % int(entry["slot"]))
-		else:
-			print("Screens: AdditionalScreen P%d — мешей: %d" % [int(entry["slot"]), applied])
 
+		if not _screen_mesh_supports_surface(mesh_instance, additional_screen_surface_index):
+			push_warning("Screens: AdditionalScreen P%d не содержит поверхность %d." % [
+				int(entry["slot"]),
+				additional_screen_surface_index
+			])
+		else:
+			mesh_instance.set_surface_override_material(additional_screen_surface_index, material)
+			print("Screens: материал AdditionalScreen P%d назначен." % int(entry["slot"]))
+		additional_screen_entries[i] = entry
 
 func _get_main_screen_models() -> Array[MeshInstance3D]:
 	var result: Array[MeshInstance3D] = []
@@ -1115,11 +1115,9 @@ func _setup_screen_touch() -> void:
 	var models := _get_main_screen_models()
 	if models.is_empty():
 		return
-	_screen_mesh_instance = _find_screen_mesh(models[0])
-	if _screen_mesh_instance == null or _screen_mesh_instance.mesh == null:
-		return
+	_screen_mesh_instance = models[0]
 	var mesh := _screen_mesh_instance.mesh
-	if not mesh is ArrayMesh or screen_surface_index >= mesh.get_surface_count():
+	if mesh == null or not mesh is ArrayMesh or screen_surface_index >= mesh.get_surface_count():
 		return
 	_screen_mdt = MeshDataTool.new()
 	if _screen_mdt.create_from_surface(mesh as ArrayMesh, screen_surface_index) != OK:
@@ -1138,13 +1136,15 @@ func _setup_screen_touch() -> void:
 func _setup_additional_screen_touch() -> void:
 	for i in range(additional_screen_entries.size()):
 		var entry: Dictionary = additional_screen_entries[i]
-		var mesh_instance := _find_screen_mesh_for_surface(entry["model"], additional_screen_surface_index)
-		if mesh_instance == null or mesh_instance.mesh == null:
-			push_warning("Screens: не найдена поверхность касания AdditionalScreen P%d." % int(entry["slot"]))
-			continue
+		var mesh_instance: MeshInstance3D = entry["model"]
 		var mesh := mesh_instance.mesh
-		if not mesh is ArrayMesh or additional_screen_surface_index >= mesh.get_surface_count():
+		if mesh == null or not mesh is ArrayMesh or additional_screen_surface_index >= mesh.get_surface_count():
+			push_warning("Screens: AdditionalScreen P%d не поддерживает поверхность касания %d." % [
+				int(entry["slot"]),
+				additional_screen_surface_index
+			])
 			continue
+
 		var mdt := MeshDataTool.new()
 		if mdt.create_from_surface(mesh as ArrayMesh, additional_screen_surface_index) != OK:
 			continue
@@ -1157,34 +1157,20 @@ func _setup_additional_screen_touch() -> void:
 		shape.shape = mesh.create_trimesh_shape()
 		click_area.add_child(shape)
 		mesh_instance.add_child(click_area)
+
 		entry["mesh_instance"] = mesh_instance
 		entry["mdt"] = mdt
 		entry["click_area"] = click_area
 		additional_screen_entries[i] = entry
 
-func _find_screen_mesh(node: Node) -> MeshInstance3D:
-	if node == null or _is_additional_screen_root(node):
-		return null
-	if node is MeshInstance3D and (node as MeshInstance3D).mesh != null \
-			and screen_surface_index < (node as MeshInstance3D).mesh.get_surface_count():
-		return node as MeshInstance3D
-	for child in node.get_children():
-		var found := _find_screen_mesh(child)
-		if found != null:
-			return found
-	return null
+func _screen_mesh_supports_surface(mesh_instance: MeshInstance3D, surface_index: int) -> bool:
+	return (
+		is_instance_valid(mesh_instance)
+		and mesh_instance.mesh != null
+		and surface_index >= 0
+		and surface_index < mesh_instance.mesh.get_surface_count()
+	)
 
-func _find_screen_mesh_for_surface(node: Node, surface_index: int) -> MeshInstance3D:
-	if node == null:
-		return null
-	if node is MeshInstance3D and (node as MeshInstance3D).mesh != null \
-			and surface_index < (node as MeshInstance3D).mesh.get_surface_count():
-		return node as MeshInstance3D
-	for child in node.get_children():
-		var found := _find_screen_mesh_for_surface(child, surface_index)
-		if found != null:
-			return found
-	return null
 
 
 func _unhandled_input(event: InputEvent) -> void:
@@ -2833,36 +2819,30 @@ func _update_time_label() -> void:
 func _setup_screen_material() -> void:
 	var models := _get_main_screen_models()
 	if models.is_empty():
-		push_warning("Screens: не назначены модели основных экранов.")
+		push_warning("Screens: в Main Screen Models не назначены MeshInstance3D.")
 		return
+
 	screen_material = ShaderMaterial.new()
 	screen_material.shader = SCREEN_SHADER
 	screen_material.set_shader_parameter("screen_texture", screen_viewport.get_texture())
 	screen_material.set_shader_parameter("emission_energy", emission_energy)
 	screen_material.set_shader_parameter("rotate_clockwise", rotate_clockwise)
-	var total_applied := 0
-	for model in models:
-		total_applied += _apply_screen_material(model, screen_surface_index, screen_material)
-	if total_applied == 0:
-		push_warning("Screens: не удалось назначить основной материал. Проверь модели и индекс поверхности.")
-	else:
-		print("Screens: основной материал назначен. Мешей: ", total_applied)
 
-func _apply_screen_material(
-	node: Node,
-	surface_index: int,
-	material: Material,
-	allow_additional_root: bool = false
-) -> int:
-	if node == null or (not allow_additional_root and _is_additional_screen_root(node)):
-		return 0
 	var applied := 0
-	if node is MeshInstance3D:
-		var mesh_instance := node as MeshInstance3D
-		if mesh_instance.mesh != null and surface_index < mesh_instance.mesh.get_surface_count():
-			mesh_instance.set_surface_override_material(surface_index, material)
-			applied += 1
-	for child in node.get_children():
-		applied += _apply_screen_material(child, surface_index, material, false)
-	return applied
+	for mesh_instance in models:
+		if not _screen_mesh_supports_surface(mesh_instance, screen_surface_index):
+			push_warning("Screens: основной экран %s не содержит поверхность %d." % [
+				mesh_instance.name,
+				screen_surface_index
+			])
+			continue
+		mesh_instance.set_surface_override_material(screen_surface_index, screen_material)
+		applied += 1
+
+	if applied == 0:
+		push_warning("Screens: не удалось назначить основной материал. Проверь выбранные меши и индекс поверхности.")
+	else:
+		print("Screens: основной материал назначен на физических экранах: ", applied)
+
+
 
