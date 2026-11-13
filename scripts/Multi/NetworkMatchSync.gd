@@ -77,6 +77,15 @@ func _ready() -> void:
 	opponent_connected = GDSync.lobby_get_all_clients().has(get_opponent_id())
 	_send_hello(true)
 	_emit_session_state()
+	call_deferred("_configure_local_camera")
+
+
+func _configure_local_camera() -> void:
+	# Камера вычисляет позицию вокруг target каждый кадр, поэтому гостю
+	# задаём базовый разворот на противоположную сторону стола.
+	for camera in get_tree().get_nodes_in_group("solitaire_camera"):
+		if is_instance_valid(camera) and camera.has_method("set_network_slot"):
+			camera.call("set_network_slot", local_slot)
 
 
 # ==================================================
