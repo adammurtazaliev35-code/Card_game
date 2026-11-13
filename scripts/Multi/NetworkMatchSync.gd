@@ -18,8 +18,12 @@ class_name NetworkMatchSync
 
 signal session_state_changed(active: bool, opponent_connected: bool, local_slot: int)
 signal remote_stats_changed(slot: int, stats: Dictionary)
+## Invite/consent flow for starting a fresh match after the current result.
+signal rematch_invitation_received(requester_slot: int)
+signal rematch_state_changed(state: String, message: String)
 
 const NODE_NAME := "NetworkMatchSync"
+const VOICE_CHAT_CONTROLLER := preload("res://scripts/Multi/NetworkVoiceChat.gd")
 const SNAPSHOT_VERSION := 1
 const FIELD_MAIN := "main"
 const FACE_UP_FLAG := 1024
@@ -36,6 +40,16 @@ var _local_deal_done := false
 var _remote_stats: Dictionary = {}   # slot -> {"moves", "undos", "available", "charges"}
 var _shared_lock_until_ms := 0
 const SHARED_LOCK_MS := 600
+
+var _rematch_outgoing_id := 0
+var _rematch_incoming_id := 0
+var _rematch_incoming_slot := 0
+var _rematch_start_sent := false
+var _rematch_scene_started := false
+var _rematch_seed := 0
+var _rematch_mode := 0
+var _rematch_draw := 0
+var _rematch_suits := 0
 
 
 static func is_network_match() -> bool:
@@ -60,6 +74,9 @@ func _ready() -> void:
 		game_manager = get_parent() as GameManager
 
 	local_slot = NetworkMatchState.slot_of(int(GDSync.get_client_id()))
+	var voice_controller := VOICE_CHAT_CONTROLLER.new()
+	voice_controller.name = "NetworkVoiceChat"
+	add_child(voice_controller)
 	if local_slot == 0:
 		push_warning("NetworkMatchSync: локальный клиент %d не найден в составе партии." % GDSync.get_client_id())
 
@@ -67,6 +84,11 @@ func _ready() -> void:
 	GDSync.expose_func(_receive_hello)
 	GDSync.expose_func(_receive_surrender)
 	GDSync.expose_func(_receive_match_result)
+	GDSync.expose_func(_receive_rematch_invitation)
+	GDSync.expose_func(_receive_rematch_response)
+	GDSync.expose_func(_receive_rematch_cancel)
+	GDSync.expose_func(_receive_rematch_start)
+	GDSync.expose_func(_receive_rematch_ready)
 
 	game_manager.history_changed.connect(_on_history_changed)
 	game_manager.deal_finished.connect(_on_deal_finished)
@@ -449,11 +471,205 @@ func _receive_match_result(sender_slot: int, winning_field: String) -> void:
 
 
 # ==================================================
+# ПОВТОРНАЯ ПАРТИЯ (оба игрока должны согласиться)
+# ==================================================
+
+## Первый клик отправляет приглашение. Повторный клик отменяет свой запрос.
+func request_rematch() -> void:
+	if not is_network_match() or local_slot == 0:
+		rematch_state_changed.emit("ERROR", "Сетевая партия больше не активна.")
+		return
+	if not opponent_connected:
+		rematch_state_changed.emit("ERROR", "Соперник отключён.")
+		return
+	if _rematch_outgoing_id != 0:
+		cancel_rematch_request()
+		return
+	if _rematch_incoming_id != 0:
+		answer_rematch(true)
+		return
+
+	_rematch_outgoing_id = maxi(1, int(Time.get_ticks_usec() & 0x7fffffff))
+	_rematch_start_sent = false
+	GDSync.call_func(_receive_rematch_invitation, local_slot, _rematch_outgoing_id)
+	rematch_state_changed.emit("WAITING", "Ожидаем согласия соперника. Повторное нажатие отменит запрос.")
+
+
+func cancel_rematch_request() -> void:
+	if _rematch_outgoing_id == 0:
+		return
+	var request_id := _rematch_outgoing_id
+	_rematch_outgoing_id = 0
+	GDSync.call_func(_receive_rematch_cancel, local_slot, request_id)
+	rematch_state_changed.emit("IDLE", "Запрос новой партии отменён.")
+
+
+## Вызывается интерфейсом приглашённого игрока.
+func answer_rematch(accepted: bool) -> void:
+	if _rematch_incoming_id == 0 or _rematch_incoming_slot == 0:
+		return
+	var request_id := _rematch_incoming_id
+	var requester_slot := _rematch_incoming_slot
+	_rematch_incoming_id = 0
+	_rematch_incoming_slot = 0
+
+	if not accepted:
+		GDSync.call_func(_receive_rematch_response, local_slot, request_id, false)
+		rematch_state_changed.emit("IDLE", "Приглашение отклонено.")
+		return
+
+	if GDSync.is_host():
+		# Хост единственный выбирает параметры и запускает смену сцены.
+		_start_rematch_as_host()
+	else:
+		# Гость подтверждает приглашение хоста; запуск выполняет хост.
+		GDSync.call_func(_receive_rematch_response, local_slot, request_id, true)
+		rematch_state_changed.emit("WAITING", "Согласие отправлено. Ожидаем запуск от хоста.")
+
+
+func _receive_rematch_invitation(requester_slot: int, request_id: int) -> void:
+	if not is_network_match() or requester_slot != get_opponent_slot() or request_id <= 0:
+		return
+	if NetworkMatchState.slot_of(int(GDSync.get_sender_id())) != requester_slot:
+		return
+	if _rematch_incoming_id == request_id:
+		return
+
+	# Если оба игрока почти одновременно нажали «Новая партия», это взаимное согласие.
+	if _rematch_outgoing_id != 0:
+		if GDSync.is_host():
+			_start_rematch_as_host()
+		else:
+			GDSync.call_func(_receive_rematch_response, local_slot, request_id, true)
+			rematch_state_changed.emit("WAITING", "Оба игрока запросили новую партию. Ожидаем хоста.")
+		return
+
+	_rematch_incoming_id = request_id
+	_rematch_incoming_slot = requester_slot
+	rematch_state_changed.emit("INVITATION", "Соперник предлагает начать новую партию.")
+	rematch_invitation_received.emit(requester_slot)
+
+
+func _receive_rematch_response(responder_slot: int, request_id: int, accepted: bool) -> void:
+	if not is_network_match():
+		return
+	if responder_slot != get_opponent_slot() or request_id != _rematch_outgoing_id:
+		return
+	if NetworkMatchState.slot_of(int(GDSync.get_sender_id())) != responder_slot:
+		return
+	if not accepted:
+		_rematch_outgoing_id = 0
+		rematch_state_changed.emit("DECLINED", "Соперник отклонил приглашение.")
+		return
+	# Положительный ответ запускает матч только на хосте. Если ответ пришёл
+	# гостю, это лишь подтверждение встречного запроса; хост пришлёт Start.
+	if GDSync.is_host():
+		_start_rematch_as_host()
+	else:
+		rematch_state_changed.emit("WAITING", "Согласие получено. Ожидаем запуск от хоста.")
+
+
+func _receive_rematch_cancel(sender_slot: int, request_id: int) -> void:
+	if not is_network_match() or sender_slot != get_opponent_slot():
+		return
+	if NetworkMatchState.slot_of(int(GDSync.get_sender_id())) != sender_slot:
+		return
+	if _rematch_incoming_id != request_id or _rematch_incoming_slot != sender_slot:
+		return
+	_rematch_incoming_id = 0
+	_rematch_incoming_slot = 0
+	rematch_state_changed.emit("IDLE", "Соперник отменил приглашение.")
+
+
+func _start_rematch_as_host() -> void:
+	if not is_network_match() or not GDSync.is_host() or _rematch_start_sent:
+		return
+	if game_manager == null:
+		push_warning("NetworkMatchSync: нельзя начать новую партию без GameManager.")
+		return
+	var mode := game_manager.current_mode
+	var draw := game_manager.draw_mode
+	var suits := game_manager.spider_suits
+	if mode not in [GameSession.MODE_KLONDIKE, GameSession.MODE_SPIDER]:
+		return
+	if draw not in [GameSession.DRAW_ONE, GameSession.DRAW_THREE]:
+		return
+
+	_rematch_start_sent = true
+	_rematch_seed = randi_range(1, 2147483646)
+	_rematch_mode = mode
+	_rematch_draw = draw
+	_rematch_suits = suits
+	_prepare_rematch_state(_rematch_seed, mode, draw, suits)
+	# Сначала передаём параметры гостю. Тот подтверждает их получение,
+	# и лишь затем хост инициирует синхронную смену сцены через GD-Sync.
+	GDSync.call_func(_receive_rematch_start, _rematch_seed, mode, draw, suits)
+	rematch_state_changed.emit("STARTING", "Согласие получено. Подготавливаем новую партию.")
+
+
+func _receive_rematch_start(seed_value: int, mode: int, draw: int, suits: int) -> void:
+	if not is_network_match() or GDSync.is_host() or _rematch_scene_started:
+		return
+	# На этом клиенте уже проверено, что он не хост. В лобби из двух
+	# участников единственный удалённый отправитель и есть текущий хост.
+	if int(GDSync.get_sender_id()) != get_opponent_id():
+		return
+	if not _prepare_rematch_state(seed_value, mode, draw, suits):
+		return
+	rematch_state_changed.emit("STARTING", "Хост подготовил новую партию. Ожидаем загрузку сцены.")
+	GDSync.call_func(_receive_rematch_ready, local_slot, seed_value)
+
+
+func _receive_rematch_ready(responder_slot: int, seed_value: int) -> void:
+	if not is_network_match() or not GDSync.is_host() or not _rematch_start_sent:
+		return
+	if responder_slot != get_opponent_slot() or seed_value != _rematch_seed:
+		return
+	if NetworkMatchState.slot_of(int(GDSync.get_sender_id())) != responder_slot:
+		return
+	if _rematch_scene_started:
+		return
+	_rematch_scene_started = true
+	# change_scene загружает сцену на всех клиентах и ждёт готовности обоих.
+	GDSync.change_scene(str(GameSession.LEVEL_SCENES[_rematch_mode]))
+
+
+func _prepare_rematch_state(seed_value: int, mode: int, draw: int, suits: int) -> bool:
+	if _rematch_scene_started or not is_network_match():
+		return false
+	if mode not in [GameSession.MODE_KLONDIKE, GameSession.MODE_SPIDER]:
+		push_warning("NetworkMatchSync: получен неизвестный режим новой партии.")
+		return false
+	if draw not in [GameSession.DRAW_ONE, GameSession.DRAW_THREE]:
+		push_warning("NetworkMatchSync: получен неизвестный режим раздачи.")
+		return false
+	_rematch_seed = seed_value
+	_rematch_mode = mode
+	_rematch_draw = draw
+	_rematch_suits = suits
+	_rematch_outgoing_id = 0
+	_rematch_incoming_id = 0
+	_rematch_incoming_slot = 0
+	NetworkMatchState.deal_seed = maxi(1, seed_value)
+	NetworkMatchState.field_decks.clear()
+	GameSession.mode = mode
+	GameSession.draw_mode = draw
+	GameSession.spider_suits = suits
+	GameSession.is_multiplayer = true
+	return true
+
+
+
+# ==================================================
 # ПОДКЛЮЧЕНИЕ
 # ==================================================
 func _on_client_left(client_id: int) -> void:
 	if client_id == get_opponent_id():
 		_set_opponent_connected(false)
+		_rematch_outgoing_id = 0
+		_rematch_incoming_id = 0
+		_rematch_incoming_slot = 0
+		rematch_state_changed.emit("IDLE", "Соперник отключился.")
 
 
 func _on_client_joined(client_id: int) -> void:
@@ -466,7 +682,11 @@ func _on_client_joined(client_id: int) -> void:
 
 func _on_disconnected() -> void:
 	opponent_connected = false
+	_rematch_outgoing_id = 0
+	_rematch_incoming_id = 0
+	_rematch_incoming_slot = 0
 	_emit_session_state()
+	rematch_state_changed.emit("IDLE", "Сетевое соединение закрыто.")
 
 
 func _set_opponent_connected(value: bool) -> void:

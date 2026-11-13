@@ -27,6 +27,9 @@ var _preview_instance: bool = false
 var game_manager: GameManager
 var victory_sequence_started := false
 var victory_input_layer: CanvasLayer
+var _network_sync: NetworkMatchSync
+var victory_new_game_button: Button
+var _rematch_invitation_layer: CanvasLayer
 
 
 func _ready() -> void:
@@ -56,6 +59,13 @@ func _connect_game_manager() -> void:
 		game_manager.game_lost.connect(_on_game_lost)
 	if not game_manager.deal_finished.is_connected(_on_deal_finished):
 		game_manager.deal_finished.connect(_on_deal_finished)
+
+	_network_sync = NetworkMatchSync.find_in(get_tree())
+	if _network_sync != null:
+		if not _network_sync.rematch_invitation_received.is_connected(_on_rematch_invitation_received):
+			_network_sync.rematch_invitation_received.connect(_on_rematch_invitation_received)
+		if not _network_sync.rematch_state_changed.is_connected(_on_rematch_state_changed):
+			_network_sync.rematch_state_changed.connect(_on_rematch_state_changed)
 
 	# На случай, если GameConsole подключился после завершения раздачи.
 	if not game_manager.is_dealing and not game_manager.game_finished:
@@ -427,6 +437,7 @@ func _show_victory_window() -> void:
 	_style_victory_button(new_game_button, true)
 	new_game_button.pressed.connect(_on_victory_new_game)
 
+	victory_new_game_button = new_game_button
 	box.add_child(new_game_button)
 
 	var menu_button := Button.new()
@@ -543,11 +554,116 @@ func _style_victory_button(
 	button.add_theme_font_size_override("font_size", 22)
 
 
+func _on_rematch_state_changed(state: String, _message: String) -> void:
+	if is_instance_valid(victory_new_game_button):
+		match state:
+			"WAITING":
+				victory_new_game_button.text = "ОТМЕНИТЬ ЗАПРОС"
+				victory_new_game_button.disabled = false
+			"DECLINED":
+				victory_new_game_button.text = "ПОВТОРИТЬ ЗАПРОС"
+				victory_new_game_button.disabled = false
+			"STARTING":
+				victory_new_game_button.text = "ЗАПУСК..."
+				victory_new_game_button.disabled = true
+			"IDLE":
+				victory_new_game_button.text = "НОВАЯ ПАРТИЯ"
+				victory_new_game_button.disabled = false
+	if state != "INVITATION" and is_instance_valid(_rematch_invitation_layer):
+		_rematch_invitation_layer.queue_free()
+		_rematch_invitation_layer = null
+
+
+func _on_rematch_invitation_received(requester_slot: int) -> void:
+	if is_instance_valid(_rematch_invitation_layer):
+		return
+	_rematch_invitation_layer = CanvasLayer.new()
+	_rematch_invitation_layer.name = "RematchInvitation"
+	_rematch_invitation_layer.layer = 110
+	add_child(_rematch_invitation_layer)
+
+	var overlay := ColorRect.new()
+	overlay.color = Color(0.02, 0.015, 0.01, 0.78)
+	overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	overlay.mouse_filter = Control.MOUSE_FILTER_STOP
+	_rematch_invitation_layer.add_child(overlay)
+
+	var center := CenterContainer.new()
+	center.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	center.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	overlay.add_child(center)
+
+	var panel := PanelContainer.new()
+	panel.custom_minimum_size = Vector2(420, 0)
+	panel.add_theme_stylebox_override("panel", _victory_box(Color("#1d120c"), Color("#8a6a3a")))
+	center.add_child(panel)
+
+	var margin := MarginContainer.new()
+	for side in ["left", "right", "top", "bottom"]:
+		margin.add_theme_constant_override("margin_" + side, 24)
+	panel.add_child(margin)
+
+	var box := VBoxContainer.new()
+	box.add_theme_constant_override("separation", 14)
+	margin.add_child(box)
+
+	var title := Label.new()
+	title.text = "НОВАЯ ПАРТИЯ?"
+	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	title.add_theme_font_size_override("font_size", 30)
+	title.add_theme_color_override("font_color", Color("#e8c36a"))
+	box.add_child(title)
+
+	var description := Label.new()
+	description.text = "%s предлагает сыграть ещё раз. Начать новую партию у обоих игроков?" % NetworkMatchState.name_of(requester_slot)
+	description.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	description.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	description.add_theme_font_size_override("font_size", 18)
+	description.add_theme_color_override("font_color", Color("#f3e6c8"))
+	box.add_child(description)
+
+	var buttons := HBoxContainer.new()
+	buttons.alignment = BoxContainer.ALIGNMENT_CENTER
+	buttons.add_theme_constant_override("separation", 12)
+	box.add_child(buttons)
+
+	var accept := Button.new()
+	accept.text = "ПРИНЯТЬ"
+	accept.custom_minimum_size = Vector2(150, 52)
+	_style_victory_button(accept, true)
+	accept.pressed.connect(_answer_rematch_invitation.bind(true))
+	buttons.add_child(accept)
+
+	var decline := Button.new()
+	decline.text = "ОТКЛОНИТЬ"
+	decline.custom_minimum_size = Vector2(150, 52)
+	_style_victory_button(decline, false)
+	decline.pressed.connect(_answer_rematch_invitation.bind(false))
+	buttons.add_child(decline)
+
+
+func _answer_rematch_invitation(accepted: bool) -> void:
+	if is_instance_valid(_rematch_invitation_layer):
+		_rematch_invitation_layer.queue_free()
+		_rematch_invitation_layer = null
+	if _network_sync != null:
+		_network_sync.answer_rematch(accepted)
+
+
+
 # ==================================================
 # BUTTON ACTIONS
 # ==================================================
 
 func _on_victory_new_game() -> void:
+	if NetworkMatchState.active:
+		if _network_sync == null:
+			_network_sync = NetworkMatchSync.find_in(get_tree())
+		if _network_sync == null:
+			push_warning("GameConsole: сетевой узел синхронизации не найден; локальный перезапуск отменён.")
+			return
+		_network_sync.request_rematch()
+		return
 	if not is_instance_valid(game_manager):
 		get_tree().reload_current_scene()
 		return

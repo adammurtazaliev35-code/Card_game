@@ -506,7 +506,10 @@ func _setup_additional_screen_material() -> void:
 		material.shader = SCREEN_SHADER
 		material.set_shader_parameter("screen_texture", viewport.get_texture())
 		material.set_shader_parameter("emission_energy", additional_emission_energy)
-		material.set_shader_parameter("rotate_clockwise", additional_rotate_clockwise)
+		# Portrait viewports must not inherit the landscape 90-degree rotation.
+		var rotate_for_viewport := additional_rotate_clockwise and viewport.size.x > viewport.size.y
+		material.set_shader_parameter("rotate_clockwise", rotate_for_viewport)
+		material.set_shader_parameter("rotation_mode", 3 if rotate_for_viewport else 0)
 		entry["material"] = material
 
 		if not _screen_mesh_supports_surface(mesh_instance, additional_screen_surface_index):
@@ -600,9 +603,9 @@ func _refresh_additional_screen_entry(slot: int, ui: Dictionary) -> void:
 		detail.text = "Это табло принадлежит сопернику. Действия доступны на его устройстве."
 		counter.text = ""
 		normal_reset.disabled = true
-		deadend_reset.disabled = true
+		deadend_reset.visible = false
+		surrender.visible = false
 		hint_button.disabled = true
-		surrender.disabled = true
 		return
 	var field_id := _get_additional_field_id(slot)
 	if field_id.is_empty():
@@ -1367,6 +1370,11 @@ func _apply_material_rotation(uv: Vector2, material: ShaderMaterial) -> Vector2:
 		var value: Variant = material.get_shader_parameter("rotation_mode")
 		if value != null:
 			mode = int(value)
+		else:
+			# Совместимость с материалами, где поворот задан только bool-параметром.
+			var clockwise: Variant = material.get_shader_parameter("rotate_clockwise")
+			if clockwise != null and not bool(clockwise):
+				mode = 0
 	match mode:
 		1:
 			return Vector2(uv.y, 1.0 - uv.x)
