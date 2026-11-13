@@ -583,7 +583,9 @@ func _apply_analysis(results: Array, version: int) -> void:
 		field_verdicts[field_id] = info
 		if verdict == KlondikePredictor.Verdict.PROGRESS or verdict == KlondikePredictor.Verdict.WON:
 			any_progress = true
-		if prev.is_empty() or int(prev["verdict"]) != verdict:
+		# Дополнительный экран показывает также uncertain и undo_steps_needed,
+		# поэтому обновляем его, когда меняется любая часть результата анализа.
+		if prev != info:
 			field_verdict_changed.emit(field_id, verdict, info)
 	moves_state_changed.emit(any_progress)
 	if not any_progress:
