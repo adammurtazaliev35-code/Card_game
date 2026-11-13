@@ -66,7 +66,11 @@ func _setup_voice_nodes() -> void:
 		if voice.has_method("mute_microphone"):
 			voice.call("mute_microphone")
 
-	_local_voice = _voice_nodes[NetworkMatchSync.find_in(get_tree()).local_slot - 1]
+	var sync := NetworkMatchSync.find_in(get_tree())
+	if sync == null or sync.local_slot not in [1, 2]:
+		push_warning("NetworkVoiceChat: не удалось определить локального игрока.")
+		return
+	_local_voice = _voice_nodes[sync.local_slot - 1]
 	_apply_voice_settings()
 	if OS.has_feature("mobile"):
 		_create_mobile_ptt_button()
@@ -106,7 +110,6 @@ func _apply_voice_settings() -> void:
 		voice.set("audio_quality", GameSettings.voice_quality)
 		voice.set("input_volume_threshold", GameSettings.voice_input_threshold)
 	for output in _output_players:
-		output.volume_db = linear_to_db(maxf(GameSettings.voice_volume, 0.001))
 		output.volume_linear = GameSettings.voice_volume
 
 
@@ -147,15 +150,28 @@ func _create_mobile_ptt_button() -> void:
 	button.offset_bottom = -28.0
 	button.add_theme_font_size_override("font_size", 18)
 	button.add_theme_color_override("font_color", Color("#f3e6c8"))
-	button.add_theme_stylebox_override("normal", GameSettings._palette_style(
-		GameSettings.get_color("button"), GameSettings.get_color("gold"), 12
+	button.add_theme_stylebox_override("normal", _button_style(
+		GameSettings.get_color("button"), GameSettings.get_color("gold")
 	))
-	button.add_theme_stylebox_override("pressed", GameSettings._palette_style(
-		GameSettings.get_color("accent"), GameSettings.get_color("gold"), 12
+	button.add_theme_stylebox_override("pressed", _button_style(
+		GameSettings.get_color("accent"), GameSettings.get_color("gold")
 	))
 	button.button_down.connect(_set_talking.bind(true))
 	button.button_up.connect(_set_talking.bind(false))
 	root.add_child(button)
+
+
+func _button_style(background: Color, border_color: Color) -> StyleBoxFlat:
+	var style := StyleBoxFlat.new()
+	style.bg_color = background
+	style.border_color = border_color
+	style.set_border_width_all(2)
+	style.set_corner_radius_all(12)
+	style.content_margin_left = 10
+	style.content_margin_right = 10
+	style.content_margin_top = 7
+	style.content_margin_bottom = 7
+	return style
 
 
 func _set_talking(value: bool) -> void:
