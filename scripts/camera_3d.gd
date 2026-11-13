@@ -63,6 +63,7 @@ var _rotating := false
 # Ручной поворот в градусах: x = yaw, y = pitch.
 var _orbit := Vector2.ZERO
 var _orbit_goal := Vector2.ZERO
+var _network_yaw_offset := 0.0
 
 # Позиции пальцев для pinch + twist на мобильных устройствах.
 var _touch_points: Dictionary = {}
@@ -80,9 +81,6 @@ func _ready() -> void:
 ## Игрок 2 смотрит на стол с противоположной стороны.
 ## Поворот применяется как базовый yaw, поэтому обычные жесты и панорамирование
 ## продолжают работать относительно нового направления.
-var _network_yaw_offset := 0.0
-
-
 func set_network_slot(slot: int) -> void:
 	_network_yaw_offset = 180.0 if slot == 2 else 0.0
 	_look = Vector2.ZERO
