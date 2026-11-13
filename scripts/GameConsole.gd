@@ -547,16 +547,33 @@ func _style_victory_button(
 # BUTTON ACTIONS
 # ==================================================
 
+## После итогов игрок покидает лобби. Когда выйдут оба участника,
+## GD-Sync автоматически удалит пустую комнату.
+func _leave_finished_network_match() -> void:
+	var sync := NetworkMatchSync.find_in(get_tree())
+	if sync != null:
+		sync.leave_finished_lobby()
+	else:
+		NetworkMatchState.clear()
+	GameSession.is_multiplayer = false
+
+
 func _on_victory_new_game() -> void:
 	if not is_instance_valid(game_manager):
+		_leave_finished_network_match()
 		get_tree().reload_current_scene()
 		return
 
+	var mode := game_manager.current_mode
+	var draw := game_manager.draw_mode
+	var suits := game_manager.spider_suits
+	_leave_finished_network_match()
+
 	GameSession.start_level(
 		get_tree(),
-		game_manager.current_mode,
-		game_manager.draw_mode,
-		game_manager.spider_suits
+		mode,
+		draw,
+		suits
 	)
 
 
@@ -572,4 +589,5 @@ func _on_victory_main_menu() -> void:
 		)
 		return
 
+	_leave_finished_network_match()
 	get_tree().change_scene_to_file(main_menu_scene_path)
