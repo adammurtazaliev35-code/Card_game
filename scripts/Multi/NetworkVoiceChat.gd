@@ -75,11 +75,11 @@ func _setup_voice_nodes() -> void:
 		if voice.has_method("mute_microphone"):
 			voice.call("mute_microphone")
 
-	var sync := NetworkMatchSync.find_in(get_tree())
-	if sync == null or sync.local_slot not in [1, 2]:
+	var local_slot := NetworkMatchState.slot_of(int(GDSync.get_client_id()))
+	if local_slot not in [1, 2]:
 		push_warning("NetworkVoiceChat: не удалось определить локального игрока.")
 		return
-	_local_voice = _voice_nodes[sync.local_slot - 1]
+	_local_voice = _voice_nodes[local_slot - 1]
 	_apply_voice_settings()
 	if OS.has_feature("mobile"):
 		_create_mobile_ptt_button()
