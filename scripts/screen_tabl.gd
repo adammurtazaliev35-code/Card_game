@@ -377,38 +377,48 @@ func _si(value: float) -> int:
 
 
 
-func _setup_additional_viewport() -> void:
-	# Масштаб AdditionalScreen независим от основного табло.
+func _setup_additional_viewports() -> void:
+	var models := _get_additional_screen_models()
+	if models.is_empty():
+		push_warning("Screens: не назначены AdditionalScreen для игроков.")
+		return
+	var safe_resolution := Vector2i(maxi(1, additional_viewport_resolution.x), maxi(1, additional_viewport_resolution.y))
+	for i in range(models.size()):
+		var model := models[i]
+		if not is_instance_valid(model):
+			continue
+		var slot := additional_screen_slots[i] if i < additional_screen_slots.size() else i + 1
+		slot = clampi(slot, 1, 2)
+		if not _additional_entry_for_slot(slot).is_empty():
+			push_warning("Screens: слот AdditionalScreen %d указан дважды." % slot)
+			continue
+		var viewport := SubViewport.new()
+		viewport.name = "AdditionalScreenViewport_P%d" % slot
+		viewport.size = safe_resolution
+		viewport.transparent_bg = false
+		viewport.render_target_update_mode = SubViewport.UPDATE_ALWAYS
+		add_child(viewport)
+		var ui := _build_additional_screen_ui(viewport, slot)
+		additional_screen_entries.append({
+			"slot": slot, "model": model, "viewport": viewport, "ui": ui,
+			"material": null, "mesh_instance": null, "mdt": null, "click_area": null
+		})
+
+
+func _build_additional_screen_ui(viewport: SubViewport, slot: int) -> Dictionary:
 	var previous_scale := ui_scale
-	var safe_resolution := Vector2i(
-		maxi(1, additional_viewport_resolution.x),
-		maxi(1, additional_viewport_resolution.y)
-	)
-	ui_scale = minf(
-		float(safe_resolution.x) / 1024.0,
-		float(safe_resolution.y) / 512.0
-	)
-
-	additional_screen_viewport = SubViewport.new()
-	additional_screen_viewport.name = "AdditionalScreenViewport"
-	additional_screen_viewport.size = safe_resolution
-	additional_screen_viewport.transparent_bg = false
-	additional_screen_viewport.render_target_update_mode = SubViewport.UPDATE_ALWAYS
-	add_child(additional_screen_viewport)
-
+	ui_scale = minf(float(viewport.size.x) / 1024.0, float(viewport.size.y) / 512.0)
 	var root := Control.new()
-	root.name = "AdditionalScreenUI"
+	root.name = "AdditionalScreenUI_P%d" % slot
 	root.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	root.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	root.theme = _make_screen_theme()
-	additional_screen_viewport.add_child(root)
-
+	viewport.add_child(root)
 	var background := ColorRect.new()
 	background.color = Color("#0D141D")
 	background.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	background.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	root.add_child(background)
-
 	var margin := MarginContainer.new()
 	margin.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	margin.add_theme_constant_override("margin_left", _si(28))
@@ -416,42 +426,33 @@ func _setup_additional_viewport() -> void:
 	margin.add_theme_constant_override("margin_top", _si(22))
 	margin.add_theme_constant_override("margin_bottom", _si(18))
 	root.add_child(margin)
-
 	var column := VBoxContainer.new()
 	column.add_theme_constant_override("separation", _si(12))
 	margin.add_child(column)
-
-	var title := _make_label("СОСТОЯНИЕ ПАРТИИ", 24, Color("#F2C35B"))
+	var title := _make_label("СОСТОЯНИЕ ПОЛЯ %d" % slot, 24, Color("#F2C35B"))
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	column.add_child(title)
-
 	var status := _make_label("ОЖИДАНИЕ АНАЛИЗА", 32, Color("#86E8CF"))
 	status.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	column.add_child(status)
-
 	var detail := _make_label("После раздачи здесь появится оценка текущей позиции.", 16, Color("#D5DFEA"))
 	detail.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	detail.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	detail.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	column.add_child(detail)
-
 	var hint_output := _make_label("Подсказка появится здесь.", 14, Color("#C6A9EE"))
 	hint_output.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	hint_output.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	column.add_child(hint_output)
-
 	var counter := _make_label("ОБЫЧНЫЕ СБРОСЫ: 0 · СЛЕДУЮЩИЙ: 10 ХОДОВ", 13, Color("#9AAEC4"))
 	counter.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	column.add_child(counter)
-
-	# Сетка 2x2 остаётся доступной и на более узких дополнительных дисплеях.
 	var buttons := GridContainer.new()
 	buttons.columns = 2
 	buttons.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 	buttons.add_theme_constant_override("h_separation", _si(12))
 	buttons.add_theme_constant_override("v_separation", _si(8))
 	column.add_child(buttons)
-
 	var normal_reset := _make_screen_button("ОБЫЧНЫЙ СБРОС", Color("#245A4A"))
 	var deadend_reset := _make_screen_button("ТУПИКОВЫЙ СБРОС · 2", Color("#6E4B22"))
 	var hint_button := _make_screen_button("ПОДСКАЗКА", Color("#44366D"))
@@ -460,97 +461,150 @@ func _setup_additional_viewport() -> void:
 	buttons.add_child(deadend_reset)
 	buttons.add_child(hint_button)
 	buttons.add_child(surrender)
-
-	normal_reset.pressed.connect(_on_additional_normal_reset)
-	deadend_reset.pressed.connect(_on_additional_deadend_reset)
-	hint_button.pressed.connect(_on_additional_hint)
-	surrender.pressed.connect(_on_additional_surrender)
-
-	additional_screen_ui = {
-		"status": status,
-		"detail": detail,
-		"hint_output": hint_output,
-		"counter": counter,
-		"normal_reset": normal_reset,
-		"deadend_reset": deadend_reset,
-		"hint_button": hint_button,
-		"surrender": surrender
+	normal_reset.pressed.connect(_on_additional_normal_reset.bind(slot))
+	deadend_reset.pressed.connect(_on_additional_deadend_reset.bind(slot))
+	hint_button.pressed.connect(_on_additional_hint.bind(slot))
+	surrender.pressed.connect(_on_additional_surrender.bind(slot))
+	ui_scale = previous_scale
+	return {
+		"title": title, "status": status, "detail": detail, "hint_output": hint_output,
+		"counter": counter, "normal_reset": normal_reset, "deadend_reset": deadend_reset,
+		"hint_button": hint_button, "surrender": surrender
 	}
 
-	ui_scale = previous_scale
+
 func _setup_additional_screen_material() -> void:
-	if additional_screen_model == null:
-		push_warning("Screens: не назначена модель AdditionalScreen. Назначь дочерний узел AdditionalScreen в инспекторе.")
-		return
-	additional_screen_material = ShaderMaterial.new()
-	additional_screen_material.shader = SCREEN_SHADER
-	additional_screen_material.set_shader_parameter(
-		"screen_texture",
-		additional_screen_viewport.get_texture()
-	)
-	additional_screen_material.set_shader_parameter("emission_energy", additional_emission_energy)
-	additional_screen_material.set_shader_parameter("rotate_clockwise", additional_rotate_clockwise)
-	var applied := _apply_screen_material(
-		additional_screen_model,
-		additional_screen_surface_index,
-		additional_screen_material
-	)
-	if applied == 0:
-		push_warning("Screens: не удалось назначить материал AdditionalScreen. Проверь поверхность модели.")
-	else:
-		print("Screens: AdditionalScreen материал назначен. Мешей: ", applied)
+	for i in range(additional_screen_entries.size()):
+		var entry: Dictionary = additional_screen_entries[i]
+		var material := ShaderMaterial.new()
+		material.shader = SCREEN_SHADER
+		material.set_shader_parameter("screen_texture", (entry["viewport"] as SubViewport).get_texture())
+		material.set_shader_parameter("emission_energy", additional_emission_energy)
+		material.set_shader_parameter("rotate_clockwise", additional_rotate_clockwise)
+		entry["material"] = material
+		var applied := _apply_screen_material(entry["model"], additional_screen_surface_index, material)
+		additional_screen_entries[i] = entry
+		if applied == 0:
+			push_warning("Screens: не удалось назначить материал AdditionalScreen P%d." % int(entry["slot"]))
+		else:
+			print("Screens: AdditionalScreen P%d — мешей: %d" % [int(entry["slot"]), applied])
 
 
-func _get_additional_field_id() -> String:
+func _get_main_screen_models() -> Array[Node3D]:
+	var result: Array[Node3D] = []
+	for model in main_screen_models:
+		if is_instance_valid(model) and not result.has(model):
+			result.append(model)
+	if result.is_empty() and is_instance_valid(screen_model):
+		result.append(screen_model)
+	return result
+
+
+func _get_additional_screen_models() -> Array[Node3D]:
+	var result: Array[Node3D] = []
+	for model in additional_screen_models:
+		if is_instance_valid(model) and not result.has(model):
+			result.append(model)
+	if result.is_empty() and is_instance_valid(additional_screen_model):
+		result.append(additional_screen_model)
+	return result
+
+
+func _collect_named_node3d(root: Node, target_name: String, result: Array[Node3D]) -> void:
+	if root is Node3D and root.name == target_name:
+		result.append(root as Node3D)
+	for child in root.get_children():
+		_collect_named_node3d(child, target_name, result)
+
+
+func _is_additional_screen_root(node: Node) -> bool:
+	for model in _get_additional_screen_models():
+		if node == model:
+			return true
+	return false
+
+
+func _additional_entry_for_slot(slot: int) -> Dictionary:
+	for entry in additional_screen_entries:
+		if int(entry.get("slot", -1)) == slot:
+			return entry
+	return {}
+
+
+func _additional_ui_for_slot(slot: int) -> Dictionary:
+	var entry := _additional_entry_for_slot(slot)
+	var ui: Dictionary = entry.get("ui", {})
+	return ui
+
+
+func _additional_viewport_for_slot(slot: int) -> SubViewport:
+	var entry := _additional_entry_for_slot(slot)
+	return entry.get("viewport") as SubViewport
+
+
+func _get_additional_field_id(slot: int) -> String:
 	if game_manager == null:
 		return ""
 	if network_session_active:
+		if slot != local_player_slot:
+			return ""
 		var sync := NetworkMatchSync.find_in(get_tree())
-		if sync != null and sync.local_slot in [1, 2]:
-			return sync.field_of_slot(sync.local_slot)
-	if is_instance_valid(player_one_stock):
-		return game_manager.get_field_id(player_one_stock)
+		if sync != null:
+			return sync.field_of_slot(slot)
+	var anchor := player_one_stock if slot == 1 else player_two_stock
+	if is_instance_valid(anchor):
+		return game_manager.get_field_id(anchor)
 	var fields := game_manager.get_field_ids()
-	return fields[0] if not fields.is_empty() else ""
+	var index := slot - 1
+	return fields[index] if index >= 0 and index < fields.size() else ""
 
 
-
-func _refresh_additional_screen() -> void:
-	if additional_screen_ui.is_empty() or game_manager == null:
+func _refresh_additional_screens() -> void:
+	if game_manager == null:
 		return
+	for entry in additional_screen_entries:
+		var slot := int(entry.get("slot", 1))
+		var ui: Dictionary = entry.get("ui", {})
+		_refresh_additional_screen_entry(slot, ui)
 
-	var field_id := _get_additional_field_id()
-	var status: Label = additional_screen_ui["status"]
-	var detail: Label = additional_screen_ui["detail"]
-	var counter: Label = additional_screen_ui["counter"]
-	var normal_reset: Button = additional_screen_ui["normal_reset"]
-	var deadend_reset: Button = additional_screen_ui["deadend_reset"]
-	var hint_button: Button = additional_screen_ui["hint_button"]
-	var surrender: Button = additional_screen_ui["surrender"]
 
+func _refresh_additional_screen_entry(slot: int, ui: Dictionary) -> void:
+	if ui.is_empty() or game_manager == null:
+		return
+	var status: Label = ui["status"]
+	var detail: Label = ui["detail"]
+	var counter: Label = ui["counter"]
+	var normal_reset: Button = ui["normal_reset"]
+	var deadend_reset: Button = ui["deadend_reset"]
+	var hint_button: Button = ui["hint_button"]
+	var surrender: Button = ui["surrender"]
+	if network_session_active and slot != local_player_slot:
+		status.text = "ПОЛЕ СОПЕРНИКА"
+		detail.text = "Это табло принадлежит сопернику. Действия доступны на его устройстве."
+		counter.text = ""
+		normal_reset.disabled = true
+		deadend_reset.disabled = true
+		hint_button.disabled = true
+		surrender.disabled = true
+		return
+	var field_id := _get_additional_field_id(slot)
 	if field_id.is_empty():
 		status.text = "ПОЛЕ НЕ НАЙДЕНО"
-		detail.text = "Не удалось определить поле текущего игрока."
+		detail.text = "Не удалось определить поле игрока %d." % slot
 		normal_reset.visible = false
 		deadend_reset.visible = false
 		hint_button.visible = false
 		surrender.visible = false
 		return
-
+	normal_reset.visible = true
+	hint_button.visible = true
+	surrender.visible = true
 	if game_manager.game_finished:
 		status.text = "ПАРТИЯ ЗАВЕРШЕНА"
 		if not game_manager.surrendered_field.is_empty():
-			detail.text = (
-				"Вы сдались."
-				if game_manager.surrendered_field == field_id
-				else "Соперник сдался."
-			)
+			detail.text = "Ваше поле сдалось." if game_manager.surrendered_field == field_id else "Соперник сдался."
 		elif not game_manager.winner_field.is_empty():
-			detail.text = (
-				"Ваше поле победило."
-				if game_manager.winner_field == field_id
-				else "Соперник завершил своё поле первым."
-			)
+			detail.text = "Ваше поле победило." if game_manager.winner_field == field_id else "Соперник завершил своё поле первым."
 		else:
 			detail.text = "Партия завершена."
 		normal_reset.disabled = true
@@ -558,7 +612,6 @@ func _refresh_additional_screen() -> void:
 		surrender.visible = false
 		hint_button.disabled = true
 		return
-
 	if not game_manager.rules is KlondikeRules:
 		status.text = "АНАЛИЗ НЕДОСТУПЕН"
 		detail.text = "Анализ ходов и сброс колоды доступны сейчас только для Клондайка."
@@ -568,9 +621,6 @@ func _refresh_additional_screen() -> void:
 		hint_button.visible = false
 		surrender.visible = false
 		return
-
-	normal_reset.visible = true
-	hint_button.visible = true
 	var info: Dictionary = game_manager.field_verdicts.get(field_id, {})
 	var verdict := int(info.get("verdict", -1))
 	match verdict:
@@ -593,89 +643,85 @@ func _refresh_additional_screen() -> void:
 		_:
 			status.text = "АНАЛИЗИРУЕМ..."
 			detail.text = "Проверяем доступные последовательности ходов. Пока поиск не закончен, тупик не объявляется."
-
 	var field_stats := game_manager.get_field_stats(field_id)
 	var reset_count := int(field_stats.get("normal_resets", 0))
 	var reset_cost := game_manager.get_normal_reset_cost(field_id)
 	counter.text = "ОБЫЧНЫЕ СБРОСЫ: %d · СЛЕДУЮЩИЙ: %d ХОДОВ" % [reset_count, reset_cost]
 	normal_reset.text = "ОБЫЧНЫЙ СБРОС · %d" % reset_cost
-	normal_reset.disabled = (
-		game_manager.is_dealing
-		or game_manager.get_field_history_count(field_id) < reset_cost
-	)
+	normal_reset.disabled = game_manager.is_dealing or game_manager.get_field_history_count(field_id) < reset_cost
 	deadend_reset.visible = verdict == KlondikePredictor.Verdict.DEAD_END
 	surrender.visible = verdict == KlondikePredictor.Verdict.DEAD_END
-	deadend_reset.disabled = (
-		game_manager.is_dealing
-		or game_manager.get_field_history_count(field_id) < 2
-	)
+	deadend_reset.disabled = game_manager.is_dealing or game_manager.get_field_history_count(field_id) < 2
 	surrender.disabled = game_manager.is_dealing
-	hint_button.disabled = (
-		game_manager.is_dealing
-		or game_manager.hint_charges <= 0
-	)
+	hint_button.disabled = game_manager.is_dealing or game_manager.hint_charges <= 0
 	hint_button.text = "ПОДСКАЗКА · %d" % game_manager.hint_charges
-func _on_additional_normal_reset() -> void:
-	if game_manager == null:
-		return
-	var field_id := _get_additional_field_id()
-	if field_id.is_empty():
+
+
+func _set_additional_hint_output(slot: int, message: String) -> void:
+	var ui := _additional_ui_for_slot(slot)
+	if not ui.is_empty():
+		(ui["hint_output"] as Label).text = message
+
+
+func _on_additional_normal_reset(slot: int) -> void:
+	var field_id := _get_additional_field_id(slot)
+	if game_manager == null or field_id.is_empty():
 		return
 	if not game_manager.normal_reset_field(field_id):
-		(additional_screen_ui["hint_output"] as Label).text = "Для обычного сброса пока недостаточно записанных ходов."
-	_refresh_additional_screen()
+		_set_additional_hint_output(slot, "Для обычного сброса пока недостаточно записанных ходов.")
+	_refresh_additional_screens()
 
 
-func _on_additional_deadend_reset() -> void:
-	if game_manager == null:
-		return
-	var field_id := _get_additional_field_id()
-	if field_id.is_empty():
+func _on_additional_deadend_reset(slot: int) -> void:
+	var field_id := _get_additional_field_id(slot)
+	if game_manager == null or field_id.is_empty():
 		return
 	if not game_manager.deadend_reset_field(field_id):
-		(additional_screen_ui["hint_output"] as Label).text = "Для тупикового сброса нужны две записи истории ходов."
-	_refresh_additional_screen()
+		_set_additional_hint_output(slot, "Для тупикового сброса нужны две записи истории ходов.")
+	_refresh_additional_screens()
 
 
-func _on_additional_surrender() -> void:
-	if game_manager == null:
-		return
-	var field_id := _get_additional_field_id()
-	if not field_id.is_empty():
+func _on_additional_surrender(slot: int) -> void:
+	var field_id := _get_additional_field_id(slot)
+	if game_manager != null and not field_id.is_empty():
 		game_manager.surrender(field_id)
-	_refresh_additional_screen()
+	_refresh_additional_screens()
 
 
-func _on_additional_hint() -> void:
-	if game_manager == null:
+func _on_additional_hint(slot: int) -> void:
+	var field_id := _get_additional_field_id(slot)
+	if game_manager == null or field_id.is_empty():
 		return
-	var field_id := _get_additional_field_id()
-	if field_id.is_empty():
-		return
-	var entries := game_manager.request_hint(field_id)
-	if entries.is_empty():
-		(additional_screen_ui["hint_output"] as Label).text = "Подсказка не найдена для текущего состояния."
-	_refresh_additional_screen()
+	var hint_entries := game_manager.request_hint(field_id)
+	if hint_entries.is_empty():
+		_set_additional_hint_output(slot, "Подсказка не найдена для текущего состояния.")
+	_refresh_additional_screens()
 
 
 func _on_hints_changed(charges: int, _used: int) -> void:
-	if additional_screen_ui.is_empty():
-		return
-	var button: Button = additional_screen_ui["hint_button"]
-	button.text = "ПОДСКАЗКА · %d" % charges
-	button.disabled = charges <= 0 or game_manager == null or game_manager.game_finished
+	for entry in additional_screen_entries:
+		var slot := int(entry.get("slot", 1))
+		var ui: Dictionary = entry.get("ui", {})
+		if ui.is_empty():
+			continue
+		var button: Button = ui["hint_button"]
+		button.text = "ПОДСКАЗКА · %d" % charges
+		button.disabled = charges <= 0 or game_manager == null or game_manager.game_finished or _get_additional_field_id(slot).is_empty()
 
 
 func _on_hint_ready(field_id: String, entries: Array) -> void:
-	if field_id != _get_additional_field_id() or additional_screen_ui.is_empty():
-		return
-	var lines: Array[String] = []
-	for entry in entries:
-		if entry is Dictionary:
-			lines.append(str(entry.get("text", "Следующий ход")))
-	var output: Label = additional_screen_ui["hint_output"]
-	output.text = "ПОДСКАЗКА:\n" + "\n".join(lines) if not lines.is_empty() else "Подсказка не найдена."
-
+	for entry in additional_screen_entries:
+		var slot := int(entry.get("slot", 1))
+		if field_id != _get_additional_field_id(slot):
+			continue
+		var ui: Dictionary = entry.get("ui", {})
+		if ui.is_empty():
+			continue
+		var lines: Array[String] = []
+		for hint_entry in entries:
+			if hint_entry is Dictionary:
+				lines.append(str(hint_entry.get("text", "Следующий ход")))
+		(ui["hint_output"] as Label).text = "ПОДСКАЗКА:\n" + "\n".join(lines) if not lines.is_empty() else "Подсказка не найдена."
 
 func _setup_viewport() -> void:
 	ui_scale = minf(
