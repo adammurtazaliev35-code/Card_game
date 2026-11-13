@@ -32,10 +32,17 @@ const FOUNDATION_RANKS := [
 	"8", "9", "10", "J", "Q", "K"
 ]
 
-@export_group("Положение табло — классика")
+@export_group("Положение первого табло — классика")
 @export var screen_rig: Node3D
 @export var classic_position := Vector3.ZERO
 @export var classic_rotation_degrees := Vector3.ZERO
+
+@export_group("Положение второго табло — одиночная игра")
+@export var screen_rig_2: Node3D
+## Позиция второго табло в одиночных раскладках Клондайк и Кольцо.
+## Можно переместить его за пределы видимой области.
+@export var single_player_position_2 := Vector3.ZERO
+@export var single_player_rotation_degrees_2 := Vector3.ZERO
 
 @export_group("Свечение кнопок")
 @export var button_glow_color := Color("#86E8CF")
@@ -45,16 +52,20 @@ const FOUNDATION_RANKS := [
 @export_group("Очки")
 @export_range(3.0, 5.0, 1.0) var score_loss_interval := 4.0
 
-@export_group("Модель основного экрана")
-## Корневой узел одной или нескольких моделей основных экранов.
-## Один и тот же экранный интерфейс будет назначен на все подходящие дочерние MeshInstance3D.
+@export_group("Основные экраны")
+## Части моделей с поверхностью основного общего табло.
+@export var main_screen_models: Array[Node3D] = []
+## Совместимость со старыми сценами.
 @export var screen_model: Node3D
 @export_range(0, 10, 1) var screen_surface_index := 1
 @export_range(0.1, 3.0, 0.1) var emission_energy := 1.3
 @export var rotate_clockwise := true
 
-@export_group("Модель AdditionalScreen")
-## Дочерняя модель второго экрана. Если не назначена, ищется узел AdditionalScreen.
+@export_group("Дополнительные экраны игроков")
+## По одному элементу на физический AdditionalScreen каждого игрока.
+@export var additional_screen_models: Array[Node3D] = []
+@export var additional_screen_slots: Array[int] = [1, 2]
+## Совместимость со старыми сценами.
 @export var additional_screen_model: Node3D
 @export_range(0, 10, 1) var additional_screen_surface_index := 1
 @export_range(0.1, 3.0, 0.1) var additional_emission_energy := 1.3
@@ -69,15 +80,16 @@ const FOUNDATION_RANKS := [
 var default_screen_position := Vector3.ZERO
 var default_screen_rotation := Vector3.ZERO
 var screen_default_saved := false
+var default_screen_position_2 := Vector3.ZERO
+var default_screen_rotation_2 := Vector3.ZERO
+var screen_default_saved_2 := false
 
 var game_manager: GameManager
 var undo_buttons_p1: Array[Area3D] = []
 var undo_buttons_p2: Array[Area3D] = []
 var screen_viewport: SubViewport
 var screen_material: ShaderMaterial
-var additional_screen_viewport: SubViewport
-var additional_screen_material: ShaderMaterial
-var additional_screen_ui: Dictionary = {}
+var additional_screen_entries: Array[Dictionary] = []
 var screen_refresh_queued := false
 
 var ui_scale := 1.0
@@ -103,26 +115,34 @@ func _ready() -> void:
 		default_screen_position = screen_rig.position
 		default_screen_rotation = screen_rig.rotation_degrees
 		screen_default_saved = true
+	if is_instance_valid(screen_rig_2):
+		default_screen_position_2 = screen_rig_2.position
+		default_screen_rotation_2 = screen_rig_2.rotation_degrees
+		screen_default_saved_2 = true
 
-	if additional_screen_model == null:
-		var found_additional := find_child("AdditionalScreen", true, false)
-		if found_additional is Node3D:
-			additional_screen_model = found_additional as Node3D
+	if main_screen_models.is_empty() and is_instance_valid(screen_model):
+		main_screen_models.append(screen_model)
+	if additional_screen_models.is_empty():
+		if is_instance_valid(additional_screen_model):
+			additional_screen_models.append(additional_screen_model)
+		else:
+			var discovered: Array[Node3D] = []
+			_collect_named_node3d(self, "AdditionalScreen", discovered)
+			additional_screen_models = discovered
 
 	_setup_viewport()
-	_setup_additional_viewport()
+	_setup_additional_viewports()
 	_setup_screen_material()
 	_setup_additional_screen_material()
 	_setup_screen_touch()
 	_setup_additional_screen_touch()
 	_setup_undo_buttons()
-
 	for ui in [player_one_ui, player_two_ui]:
 		var deadend: Dictionary = ui["deadend"]
 		(deadend["surrender"] as Button).pressed.connect(_on_deadend_surrender.bind(ui))
 		(deadend["reshuffle"] as Button).pressed.connect(_on_deadend_reshuffle.bind(ui))
-
 	call_deferred("_connect_game_manager")
+
 func _process(delta: float) -> void:
 	if not timer_running:
 		return
@@ -174,57 +194,67 @@ func request_create_lobby() -> void:
 # DISPLAY TRANSFORM
 # ==================================================
 func _apply_display_transform() -> void:
-	if not is_instance_valid(screen_rig):
-		return
+	if is_instance_valid(screen_rig):
+		if display_mode == DisplayMode.CLASSIC:
+			screen_rig.position = classic_position
+			screen_rig.rotation_degrees = classic_rotation_degrees
+		elif screen_default_saved:
+			screen_rig.position = default_screen_position
+			screen_rig.rotation_degrees = default_screen_rotation
 
-	if display_mode == DisplayMode.CLASSIC:
-		screen_rig.position = classic_position
-		screen_rig.rotation_degrees = classic_rotation_degrees
-	elif screen_default_saved:
-		screen_rig.position = default_screen_position
-		screen_rig.rotation_degrees = default_screen_rotation
-
-
-# ==================================================
-# UNDO BUTTONS
-# ==================================================
+	if is_instance_valid(screen_rig_2):
+		var single_board_mode := (
+			display_mode == DisplayMode.CLASSIC
+			or display_mode == DisplayMode.RING
+		)
+		if single_board_mode:
+			screen_rig_2.position = single_player_position_2
+			screen_rig_2.rotation_degrees = single_player_rotation_degrees_2
+		elif screen_default_saved_2:
+			screen_rig_2.position = default_screen_position_2
+			screen_rig_2.rotation_degrees = default_screen_rotation_2
 
 func _setup_undo_buttons() -> void:
 	undo_buttons_p1.clear()
 	undo_buttons_p2.clear()
-	_collect_areas3d(screen_model, "UndoBtnP1", undo_buttons_p1)
-	_collect_areas3d(screen_model, "UndoBtnP2", undo_buttons_p2)
-	if undo_buttons_p1.is_empty():
-		_collect_areas3d(self, "UndoBtnP1", undo_buttons_p1)
-	if undo_buttons_p2.is_empty():
-		_collect_areas3d(self, "UndoBtnP2", undo_buttons_p2)
-
+	var search_roots: Array[Node] = []
+	for rig in [screen_rig, screen_rig_2]:
+		if is_instance_valid(rig) and not search_roots.has(rig):
+			search_roots.append(rig)
+	if search_roots.is_empty():
+		for model in _get_main_screen_models():
+			search_roots.append(model)
+	if search_roots.is_empty():
+		search_roots.append(self)
+	for root in search_roots:
+		_collect_areas3d(root, "UndoBtnP1", undo_buttons_p1)
+		_collect_areas3d(root, "UndoBtnP2", undo_buttons_p2)
 	for button in undo_buttons_p1:
 		button.input_ray_pickable = true
 		if not button.input_event.is_connected(_on_undo_p1_input_event):
 			button.input_event.connect(_on_undo_p1_input_event)
 		_apply_button_glow(button)
-
 	for button in undo_buttons_p2:
 		button.input_ray_pickable = true
 		if not button.input_event.is_connected(_on_undo_p2_input_event):
 			button.input_event.connect(_on_undo_p2_input_event)
 		_apply_button_glow(button)
-
 	if undo_buttons_p1.is_empty():
 		push_warning("Screens: UndoBtnP1 не найден.")
 	if undo_buttons_p2.is_empty():
 		push_warning("Screens: UndoBtnP2 не найден.")
 	_refresh_undo_buttons()
 
-
 func _collect_areas3d(root: Node, target_name: String, result: Array[Area3D]) -> void:
-	if root == null or root == additional_screen_model:
+	if root == null or _is_additional_screen_root(root):
 		return
 	if root is Area3D and root.name == target_name:
-		result.append(root as Area3D)
+		var area := root as Area3D
+		if not result.has(area):
+			result.append(area)
 	for child in root.get_children():
 		_collect_areas3d(child, target_name, result)
+
 func _apply_button_glow(root: Node) -> void:
 	if root == null:
 		return
