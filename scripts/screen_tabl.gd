@@ -2308,11 +2308,11 @@ func _update_additional_screen() -> void:
 	var field_id := _get_additional_field_id()
 	var stats := game_manager.get_field_stats(field_id)
 	var reset_cost := game_manager.get_normal_reset_undo_cost(field_id)
-	var moves_done := int(stats.get("moves", 0))
+	# История поля очищается после каждого сброса; поэтому её размер —
+	# точный прогресс к следующему обычному сбросу без отдельного счётчика ходов.
 	var history_count := game_manager.get_field_history_count(field_id)
 	var reset_ready := (
-		moves_done >= reset_cost
-		and history_count >= reset_cost
+		history_count >= reset_cost
 		and game_manager.can_redeal_field(field_id, reset_cost)
 	)
 	var normal_button: Button = additional_screen_ui["normal_reset"]
@@ -2320,7 +2320,7 @@ func _update_additional_screen() -> void:
 	normal_button.disabled = not reset_ready
 	(additional_screen_ui["reset_progress"] as Label).text = (
 		"Обычный сброс: %d/%d ходов · отменит %d"
-		% [mini(moves_done, reset_cost), reset_cost, reset_cost]
+		% [mini(history_count, reset_cost), reset_cost, reset_cost]
 	)
 
 	var verdict_info: Dictionary = game_manager.field_verdicts.get(field_id, {})
