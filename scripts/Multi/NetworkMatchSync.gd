@@ -180,6 +180,9 @@ func _send_snapshot() -> void:
 	var piles_data := {}
 	for pile in _local_scope_piles():
 		piles_data[_pile_key(pile)] = _encode_pile(pile)
+	var undo_history_count := game_manager.history.size()
+	if is_split_ownership():
+		undo_history_count = game_manager.get_field_history_count(field_of_slot(local_slot))
 	var payload := {
 		"v": SNAPSHOT_VERSION,
 		"seq": _send_seq,
@@ -188,7 +191,7 @@ func _send_snapshot() -> void:
 		"stats": {
 			"moves": game_manager.moves_count,
 			"undos": game_manager.undo_count,
-			"available": mini(game_manager.history.size(), game_manager.undo_charges),
+			"available": mini(undo_history_count, game_manager.undo_charges),
 			"charges": game_manager.undo_charges,
 		},
 	}
@@ -391,10 +394,11 @@ func _cancel_local_drag_if_touching(targets: Array[Pile]) -> void:
 func handle_undo_request(player_slot: int) -> void:
 	if player_slot != local_slot or game_manager == null:
 		return
-	if mini(game_manager.history.size(), game_manager.undo_charges) <= 0:
+	var field_id := field_of_slot(local_slot)
+	if game_manager.get_field_history_count(field_id) <= 0 or game_manager.undo_charges <= 0:
 		return
 	# undo() шлёт history_changed — снимок уйдёт сопернику автоматически.
-	game_manager.undo()
+	game_manager.undo(true, field_id)
 
 
 # ==================================================

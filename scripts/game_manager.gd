@@ -113,7 +113,25 @@ func get_field_id(pile: Pile) -> String:
 
 func get_field_stats(field_id: String) -> Dictionary:
 	var s: Dictionary = field_stats.get(field_id, {})
-	return {"moves": int(s.get("moves", 0)), "undos": int(s.get("undos", 0))}
+	return {
+		"moves": int(s.get("moves", 0)),
+		"undos": int(s.get("undos", 0)),
+		"normal_resets": int(s.get("normal_resets", 0))
+	}
+
+
+## Количество записей истории, принадлежащих только этому полю.
+func get_field_history_count(field_id: String) -> int:
+	var count := 0
+	for record in history:
+		if _record_field(record) == field_id:
+			count += 1
+	return count
+
+
+## Цена следующего обычного сброса для указанного поля.
+func get_normal_reset_cost(field_id: String) -> int:
+	return 10 + 5 * int(get_field_stats(field_id)["normal_resets"])
 
 
 ## Поле хода — по исходной стопке первой перенесённой карты.
@@ -128,11 +146,13 @@ func _record_field(record: MoveRecord) -> String:
 	return FIELD_MAIN
 
 
+
 func _add_field_stat(field_id: String, key: String, delta: int) -> void:
 	if not field_stats.has(field_id):
-		field_stats[field_id] = {"moves": 0, "undos": 0}
-	field_stats[field_id][key] = maxi(0, int(field_stats[field_id][key]) + delta)
-
+		field_stats[field_id] = {"moves": 0, "undos": 0, "normal_resets": 0}
+	var stats: Dictionary = field_stats[field_id]
+	stats[key] = maxi(0, int(stats.get(key, 0)) + delta)
+	field_stats[field_id] = stats
 func _ready() -> void:
 	add_to_group("game_manager")
 	if limits == null:
@@ -341,62 +361,74 @@ func commit(record: MoveRecord) -> void:
 
 	_check_state()
 
-func undo() -> bool:
-	if game_finished:
+
+
+func undo(use_charge: bool = true, field_id: String = "") -> bool:
+	if game_finished or is_dealing or history.is_empty():
 		return false
 
-	# Сеть: отменять можно только ход на своём поле.
+	# По умолчанию отменяем глобально последний ход. Для кнопок отдельного
+	# поля и автоматических сбросов ищем последнюю запись именно этого поля.
+	var record_index := history.size() - 1
+	if not field_id.is_empty():
+		record_index = -1
+		for i in range(history.size() - 1, -1, -1):
+			if _record_field(history[i]) == field_id:
+				record_index = i
+				break
+	if record_index < 0:
+		return false
+
+	var record: MoveRecord = history[record_index]
+
+	# Сеть: отменять можно только записи своего поля.
 	var sync := NetworkMatchSync.find_in(get_tree())
-	if sync != null and not history.is_empty():
-		for s in history.back().steps:
-			var step_card: Card = s["card"]
+	if sync != null:
+		for step in record.steps:
+			var step_card: Card = step["card"]
 			if is_instance_valid(step_card) and step_card.pile is Pile \
 					and not sync.can_local_interact(step_card.pile):
 				return false
+			var from_pile: Variant = step.get("from")
+			if from_pile is Pile and not sync.can_local_interact(from_pile):
+				return false
 
-	if is_dealing or history.is_empty():
-		return false
-
-	if undo_charges <= 0:
+	if use_charge and undo_charges <= 0:
 		undo_limit_reached.emit()
 		return false
 
-	var record: MoveRecord = history.pop_back()
+	history.remove_at(record_index)
+	if use_charge:
+		undo_charges -= 1
+		# Счётчик ручных отмен увеличивается только от действия игрока.
+		undo_count += 1
 
-	undo_charges -= 1
-	undo_count += 1
 	moves_count = maxi(0, moves_count - 1)
 	var undo_field := _record_field(record)
 	_add_field_stat(undo_field, "moves", -1)
-	_add_field_stat(undo_field, "undos", 1)
+	if use_charge:
+		_add_field_stat(undo_field, "undos", 1)
 
 	for i in range(record.steps.size() - 1, -1, -1):
 		var s: Dictionary = record.steps[i]
 		var card: Card = s["card"]
-
 		if not is_instance_valid(card):
 			continue
 
 		if s["type"] == "flip":
 			card.set_face_up(s["face_up"])
-
 			if card.pile != null:
 				card.pile.relayout()
 		else:
 			var from: Pile = s["from"]
-
 			if is_instance_valid(from):
 				from.add_card(card, s["index"])
 
 	history_changed.emit(history.size())
-
 	_emit_statistics()
 	_emit_board_counts()
-
 	_check_state()
-
 	return true
-
 func grant_ad_undo_reward() -> int:
 	if game_finished:
 		return 0
@@ -516,6 +548,7 @@ func _analysis_worker(jobs: Array, version: int) -> void:
 	call_deferred("_apply_analysis", results, version)
 
 
+
 func _apply_analysis(results: Array, version: int) -> void:
 	if _analysis_task != -1:
 		WorkerThreadPool.wait_for_task_completion(_analysis_task)
@@ -535,17 +568,23 @@ func _apply_analysis(results: Array, version: int) -> void:
 		var verdict := int(info["verdict"])
 		var prev: Dictionary = field_verdicts.get(field_id, {})
 		field_verdicts[field_id] = info
+
+		# Сигнал также нужен при изменении uncertain / undo_steps_needed,
+		# даже если основной вердикт не поменялся.
+		var info_changed := (
+			prev.is_empty()
+			or int(prev.get("verdict", -1)) != verdict
+			or bool(prev.get("uncertain", false)) != bool(info.get("uncertain", false))
+			or int(prev.get("undo_steps_needed", 0)) != int(info.get("undo_steps_needed", 0))
+		)
+		if info_changed:
+			field_verdict_changed.emit(field_id, verdict, info)
+
 		if verdict == KlondikePredictor.Verdict.PROGRESS or verdict == KlondikePredictor.Verdict.WON:
 			any_progress = true
-		if prev.is_empty() or int(prev["verdict"]) != verdict:
-			field_verdict_changed.emit(field_id, verdict, info)
 	moves_state_changed.emit(any_progress)
 	if not any_progress:
 		no_moves_left.emit()
-
-
-## Окончательный тупик: игрок сдаётся. В сети побеждает соперник (его поле),
-## в одиночной игре партия записывается как поражение.
 func surrender(field_id: String, notify_network: bool = true) -> void:
 	if game_finished:
 		return
@@ -566,9 +605,41 @@ func surrender(field_id: String, notify_network: bool = true) -> void:
 
 ## Окончательный тупик: перетасовать карты поля (кроме уже собранных в дом)
 ## и разложить заново по схеме Клондайка. История отмен поля сбрасывается.
+
+## Совместимость со старым вызовом: обычный redeal здесь считается тупиковым сбросом.
 func redeal_field(field_id: String) -> bool:
+	return deadend_reset_field(field_id)
+
+
+## Обычный сброс: цена растёт на 5 после каждого успешного обычного сброса.
+func normal_reset_field(field_id: String) -> bool:
+	return _redeal_field(field_id, get_normal_reset_cost(field_id), true)
+
+
+## Тупиковый сброс: всегда отменяет ровно два последних хода и не меняет
+## счётчик обычных сбросов.
+func deadend_reset_field(field_id: String) -> bool:
+	return _redeal_field(field_id, 2, false)
+
+
+
+func _redeal_field(field_id: String, undo_steps: int, count_normal_reset: bool) -> bool:
 	if game_finished or is_dealing or not rules is KlondikeRules:
 		return false
+	if undo_steps <= 0:
+		return false
+
+	# Выбираем ровно N последних записей целевого поля, а не N последних
+	# глобальных записей: в зеркальной одиночной партии история общая.
+	var selected_indices: Array[int] = []
+	for history_index in range(history.size() - 1, -1, -1):
+		if _record_field(history[history_index]) == field_id:
+			selected_indices.append(history_index)
+			if selected_indices.size() >= undo_steps:
+				break
+	if selected_indices.size() < undo_steps:
+		return false
+
 	var stock: Pile = null
 	var waste: Pile = null
 	var tableau: Array[Pile] = []
@@ -582,12 +653,35 @@ func redeal_field(field_id: String) -> bool:
 				waste = p
 			PileMarker.Kind.TABLEAU:
 				tableau.append(p)
-	if stock == null:
+	if stock == null or tableau.is_empty():
 		return false
+
 	tableau.sort_custom(func(a: Pile, b: Pile) -> bool:
 		return KlondikePredictor._marker_number(a) < KlondikePredictor._marker_number(b))
 
-	# Собираем карты поля в колоду рубашкой вверх.
+	# Предварительно проверяем все целевые записи: сетевой отказ не должен
+	# отменить часть ходов и оставить поле в промежуточном состоянии.
+	var sync := NetworkMatchSync.find_in(get_tree())
+	if sync != null:
+		for history_index in selected_indices:
+			var record: MoveRecord = history[history_index]
+			for step in record.steps:
+				var step_card: Card = step["card"]
+				if is_instance_valid(step_card) and step_card.pile is Pile \
+						and not sync.can_local_interact(step_card.pile):
+					return false
+				var from_pile: Variant = step.get("from")
+				if from_pile is Pile and not sync.can_local_interact(from_pile):
+					return false
+
+	# Отменяем именно выбранные записи поля через штатный Undo без расхода
+	# зарядов. Записи другого поля остаются в истории и не затрагиваются.
+	for step_index in range(undo_steps):
+		if not undo(false, field_id):
+			push_warning("GameManager: сброс прерван — не удалось отменить ход %d." % (step_index + 1))
+			return false
+
+	# Перетасовываем только STOCK / WASTE / TABLEAU. Foundation сохраняется.
 	var pool: Array[Card] = []
 	for p in [waste] + tableau + [stock]:
 		if p == null:
@@ -599,7 +693,6 @@ func redeal_field(field_id: String) -> bool:
 		c.set_face_up(false)
 		stock.add_card(c)
 
-	# Раскладка как в начале партии, пока хватает карт.
 	for row in tableau.size():
 		for col in range(row, tableau.size()):
 			if stock.cards.is_empty():
@@ -608,20 +701,22 @@ func redeal_field(field_id: String) -> bool:
 			card.set_face_up(col == row)
 			tableau[col].add_card(card)
 
-	# Старые записи отмены ссылаются на позиции до перетасовки.
+	# После перемешивания старые записи этого поля больше невалидны.
 	var keep: Array[MoveRecord] = []
 	for record in history:
 		if _record_field(record) != field_id:
 			keep.append(record)
 	history = keep
+
+	if count_normal_reset:
+		_add_field_stat(field_id, "normal_resets", 1)
+
 	field_verdicts.erase(field_id)
-	history_changed.emit(history.size())   # в сети уйдёт снимок поля
+	history_changed.emit(history.size())
 	_emit_statistics()
 	_emit_board_counts()
 	_check_state()
 	return true
-
-
 func _check_state() -> void:
 	if rules == null or is_dealing or game_finished:
 		return

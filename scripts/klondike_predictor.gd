@@ -194,6 +194,7 @@ func state_from_board() -> Array:
 
 ## Состояние поля после отмены последних undo_steps ходов истории.
 ## Ходы другого поля пропускаются (их отмена наше поле не меняет). null — не удалось.
+
 func state_after_undos(history: Array[MoveRecord], undo_steps: int) -> Variant:
 	var content: Array = []    # для каждой стопки: Array of [Card, face_up]
 	for p in piles:
@@ -201,10 +202,29 @@ func state_after_undos(history: Array[MoveRecord], undo_steps: int) -> Variant:
 		for c in p.cards:
 			arr.append([c, c.face_up])
 		content.append(arr)
+
 	var steps_done := 0
 	var i := history.size() - 1
 	while i >= 0 and steps_done < undo_steps:
 		var record: MoveRecord = history[i]
+		var belongs_to_field := false
+
+		# История может содержать ходы нескольких независимых полей.
+		# Запись считается нашей, если затрагивает карту/стопку этого предсказателя.
+		for step in record.steps:
+			var step_card: Card = step["card"]
+			if _find_in_content(content, step_card).x >= 0:
+				belongs_to_field = true
+				break
+			var from_pile: Variant = step.get("from")
+			if from_pile is Pile and piles.has(from_pile):
+				belongs_to_field = true
+				break
+
+		if not belongs_to_field:
+			i -= 1
+			continue
+
 		for s_index in range(record.steps.size() - 1, -1, -1):
 			var s: Dictionary = record.steps[s_index]
 			var card: Card = s["card"]
@@ -213,11 +233,10 @@ func state_after_undos(history: Array[MoveRecord], undo_steps: int) -> Variant:
 				if where.x >= 0:
 					content[where.x][where.y][1] = bool(s["face_up"])
 				continue
+
 			var from_index := piles.find(s["from"])
-			if where.x < 0 and from_index < 0:
-				continue   # ход другого поля
 			if where.x < 0 or from_index < 0:
-				return null   # карта переходила между полями — так не бывает
+				return null
 			var entry: Array = content[where.x][where.y]
 			content[where.x].remove_at(where.y)
 			var dest: Array = content[from_index]
@@ -226,8 +245,15 @@ func state_after_undos(history: Array[MoveRecord], undo_steps: int) -> Variant:
 				dest.append(entry)
 			else:
 				dest.insert(at, entry)
+
 		steps_done += 1
 		i -= 1
+
+	# Нельзя подставлять повторяющееся состояние, если ходов этого поля меньше,
+	# чем запрошено: иначе анализатор ошибочно завысит число нужных отмен.
+	if steps_done < undo_steps:
+		return null
+
 	var state: Array = []
 	for arr in content:
 		var codes: Array = []
@@ -235,8 +261,6 @@ func state_after_undos(history: Array[MoveRecord], undo_steps: int) -> Variant:
 			codes.append(encode(entry[0], entry[1]))
 		state.append(codes)
 	return state
-
-
 func _find_in_content(content: Array, card: Card) -> Vector2i:
 	for pi in content.size():
 		var arr: Array = content[pi]
