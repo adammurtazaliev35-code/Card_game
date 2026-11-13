@@ -237,7 +237,7 @@ func _apply_display_transform() -> void:
 		if is_classic and move_screen_rig_2_in_classic:
 			screen_rig_2.position = classic_position_2
 			screen_rig_2.rotation_degrees = classic_rotation_degrees_2
-		elif not is_classic and screen_2_default_saved:
+		elif screen_2_default_saved:
 			screen_rig_2.position = default_screen_position_2
 			screen_rig_2.rotation_degrees = default_screen_rotation_2
 
