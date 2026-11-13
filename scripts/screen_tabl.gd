@@ -105,7 +105,6 @@ func _ready() -> void:
 	_setup_additional_viewport()
 	_setup_screen_material()
 	_setup_additional_screen_material()
-	_setup_screen_touch()
 	_setup_additional_screen_touch()
 	_setup_undo_buttons()
 	call_deferred("_connect_game_manager")
@@ -584,47 +583,6 @@ func _create_player_panel(parent: HBoxContainer, player_title: String) -> Dictio
 ## Окончательный тупик: затемнение поля игрока, предупреждение и выбор
 ## «Сдаться» / «Перетасовать». Кнопки нажимаются прямо на экране табло
 ## (клик по 3D-экрану пересылается в этот SubViewport — см. _forward_screen_click).
-func _create_deadend_overlay(panel: PanelContainer) -> Dictionary:
-	var overlay := Control.new()
-	overlay.name = "DeadEndOverlay"
-	overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	overlay.visible = false
-	panel.add_child(overlay)
-
-	var dim := ColorRect.new()
-	dim.color = Color(0.03, 0.02, 0.02, 0.82)
-	dim.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	dim.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	overlay.add_child(dim)
-
-	var center := CenterContainer.new()
-	center.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	center.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	overlay.add_child(center)
-
-	var box := VBoxContainer.new()
-	box.alignment = BoxContainer.ALIGNMENT_CENTER
-	box.add_theme_constant_override("separation", _si(10))
-	center.add_child(box)
-
-	var title := _make_label("⚠ ОКОНЧАТЕЛЬНЫЙ ТУПИК", 24, Color("#FF8A6B"))
-	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	box.add_child(title)
-	var hint := _make_label("Продвигающих ходов нет, отмены не помогут.", 13, Color("#F3E6C8"))
-	hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	box.add_child(hint)
-
-	var buttons := HBoxContainer.new()
-	buttons.alignment = BoxContainer.ALIGNMENT_CENTER
-	buttons.add_theme_constant_override("separation", _si(14))
-	box.add_child(buttons)
-	var surrender := _make_screen_button("СДАТЬСЯ", Color("#6E2A22"))
-	var reshuffle := _make_screen_button("ПЕРЕТАСОВАТЬ", Color("#245A4A"))
-	buttons.add_child(surrender)
-	buttons.add_child(reshuffle)
-	return {"root": overlay, "title": title, "hint": hint, "surrender": surrender, "reshuffle": reshuffle, "field": ""}
-
-
 func _make_screen_button(text_value: String, base: Color) -> Button:
 	var button := Button.new()
 	button.text = text_value
@@ -667,21 +625,9 @@ func _is_local_field(field_id: String) -> bool:
 	return sync.field_of_slot(sync.local_slot) == field_id
 
 
-func _on_deadend_surrender(_ui: Dictionary = {}) -> void:
-	_on_additional_surrender_pressed()
-
-
-func _on_deadend_reshuffle(_ui: Dictionary = {}) -> void:
-	_on_additional_deadend_reset_pressed()
-
-
 # ==================================================
 # КЛИКИ ПО 3D-ЭКРАНУ → SubViewport
 # ==================================================
-var _screen_click_area: Area3D
-var _screen_mesh_instance: MeshInstance3D
-var _screen_mdt: MeshDataTool
-
 var _additional_screen_click_area: Area3D
 var _additional_screen_mesh_instance: MeshInstance3D
 var _additional_screen_mdt: MeshDataTool
@@ -691,28 +637,6 @@ const SCREEN_CLICK_LAYER := 1 << 19
 
 ## Делает экран табло кликабельным: коллизия по мешу экрана (отдельный слой,
 ## карты и стопки её не видят) и данные меша для пересчёта точки в UV.
-func _setup_screen_touch() -> void:
-	_screen_mesh_instance = screen_surface_mesh if is_instance_valid(screen_surface_mesh) else _find_screen_mesh(screen_model, additional_screen_model, screen_surface_index)
-	if _screen_mesh_instance == null or _screen_mesh_instance.mesh == null:
-		return
-	var mesh := _screen_mesh_instance.mesh
-	if not mesh is ArrayMesh or screen_surface_index >= mesh.get_surface_count():
-		return
-	_screen_mdt = MeshDataTool.new()
-	if _screen_mdt.create_from_surface(mesh as ArrayMesh, screen_surface_index) != OK:
-		_screen_mdt = null
-		return
-	_screen_click_area = Area3D.new()
-	_screen_click_area.name = "ScreenTouchArea"
-	_screen_click_area.collision_layer = SCREEN_CLICK_LAYER
-	_screen_click_area.collision_mask = 0
-	_screen_click_area.monitoring = false
-	var shape := CollisionShape3D.new()
-	shape.shape = mesh.create_trimesh_shape()
-	_screen_click_area.add_child(shape)
-	_screen_mesh_instance.add_child(_screen_click_area)
-
-
 func _find_screen_mesh(
 	node: Node,
 	excluded_subtree: Node = null,
@@ -765,36 +689,10 @@ func _unhandled_input(event: InputEvent) -> void:
 	get_viewport().set_input_as_handled()
 
 
-func _any_deadend_visible() -> bool:
-	return false
-
-
 ## Экранная точка мыши → пиксель SubViewport табло (null — мимо экрана).
-func _screen_pixel_under_mouse(mouse_position: Vector2) -> Variant:
-	if _screen_mdt == null or not is_instance_valid(_screen_click_area):
-		return null
-	var camera := get_viewport().get_camera_3d()
-	if camera == null:
-		return null
-	var origin := camera.project_ray_origin(mouse_position)
-	var query := PhysicsRayQueryParameters3D.create(origin, origin + camera.project_ray_normal(mouse_position) * 100.0, SCREEN_CLICK_LAYER)
-	query.collide_with_areas = true
-	query.collide_with_bodies = false
-	var hit := get_world_3d().direct_space_state.intersect_ray(query)
-	if hit.is_empty():
-		return null
-	var local := _screen_mesh_instance.global_transform.affine_inverse() * (hit["position"] as Vector3)
-	var uv: Variant = _uv_at(local)
-	if uv == null:
-		return null
-	var screen_uv := _apply_screen_rotation(uv)
-	return Vector2(screen_uv.x * viewport_resolution.x, screen_uv.y * viewport_resolution.y)
-
-
 ## UV точки на меше экрана: ищем треугольник, в который попала точка, и
 ## интерполируем UV по барицентрическим координатам.
-func _uv_at(local_point: Vector3, source_mdt: MeshDataTool = null) -> Variant:
-	var mdt := _screen_mdt if source_mdt == null else source_mdt
+func _uv_at(local_point: Vector3, mdt: MeshDataTool) -> Variant:
 	if mdt == null:
 		return null
 	var best_distance := INF
