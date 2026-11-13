@@ -1,11 +1,14 @@
 extends RefCounted
 class_name GameStatistics
 
-## Persistent local statistics. No Autoload is required.
+## Local statistics plus a private GD-Sync account backup when the player is logged in.
 const SAVE_PATH := "user://solitaire_statistics.cfg"
+const CLOUD_PATH := "card_game/statistics"
 
 static var _loaded: bool = false
 static var _data: Dictionary = {}
+static var _cloud_sync_running := false
+static var _cloud_sync_dirty := false
 
 
 static func _defaults() -> Dictionary:
@@ -74,6 +77,40 @@ static func _save() -> void:
 	var err := config.save(SAVE_PATH)
 	if err != OK:
 		push_warning("GameStatistics: не удалось сохранить статистику (%d)." % err)
+	_queue_cloud_sync()
+
+
+## Отправляет актуальную локальную сводку в приватный документ аккаунта.
+## Локальное сохранение остаётся основным резервом, если игрок не вошёл
+## в аккаунт или сервер/база данных GD-Sync недоступны.
+static func _queue_cloud_sync() -> void:
+	if not GDSync.account_is_logged_in():
+		return
+	_cloud_sync_dirty = true
+	if _cloud_sync_running:
+		return
+	_cloud_sync_running = true
+	_upload_cloud_stats()
+
+
+static func _upload_cloud_stats() -> void:
+	while _cloud_sync_dirty:
+		_cloud_sync_dirty = false
+		if not GDSync.account_is_logged_in():
+			break
+		var response_code: int = await GDSync.account_document_set(
+			CLOUD_PATH,
+			_data.duplicate(true),
+			false
+		)
+		if response_code != ENUMS.ACCOUNT_DOCUMENT_SET_RESPONSE_CODE.SUCCESS:
+			push_warning(
+				"GameStatistics: облачная запись GD-Sync не выполнена. Код ответа: %d. "
+				+ "Проверь вход в аккаунт и привязку базы данных к API-ключу."
+				% response_code
+			)
+			break
+	_cloud_sync_running = false
 
 
 static func _mode_data(mode: int) -> Dictionary:
