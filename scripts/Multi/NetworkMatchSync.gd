@@ -23,6 +23,7 @@ signal rematch_invitation_received(requester_slot: int)
 signal rematch_state_changed(state: String, message: String)
 
 const NODE_NAME := "NetworkMatchSync"
+const VOICE_CHAT_CONTROLLER := preload("res://scripts/Multi/NetworkVoiceChat.gd")
 const SNAPSHOT_VERSION := 1
 const FIELD_MAIN := "main"
 const FACE_UP_FLAG := 1024
@@ -69,6 +70,9 @@ func _ready() -> void:
 		game_manager = get_parent() as GameManager
 
 	local_slot = NetworkMatchState.slot_of(int(GDSync.get_client_id()))
+	var voice_controller := VOICE_CHAT_CONTROLLER.new()
+	voice_controller.name = "NetworkVoiceChat"
+	add_child(voice_controller)
 	if local_slot == 0:
 		push_warning("NetworkMatchSync: локальный клиент %d не найден в составе партии." % GDSync.get_client_id())
 
