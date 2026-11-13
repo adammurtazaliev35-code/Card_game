@@ -1933,6 +1933,7 @@ func _on_remote_stats_changed(_slot: int, _stats: Dictionary) -> void:
 
 ## Статистика конкретного игрока. В сети у каждого своя история ходов:
 ## свои цифры берём из GameManager, цифры соперника — из его последнего снимка.
+
 func _get_slot_stats(slot: int) -> Dictionary:
 	if network_session_active and slot != local_player_slot:
 		var sync := NetworkMatchSync.find_in(get_tree())
@@ -1945,21 +1946,28 @@ func _get_slot_stats(slot: int) -> Dictionary:
 			"available": int(remote.get("available", 0)),
 		}
 	if display_mode == DisplayMode.MIRRORED and not network_session_active:
-		# Одиночная игра на двух полях: ходы и отмены считаются по каждому полю.
+		# В зеркальной одиночной игре доступные отмены тоже считаются отдельно
+		# для каждого поля, поскольку Undo теперь выбирает конкретное поле.
 		var anchor := player_one_stock if slot == 1 else player_two_stock
-		var field := game_manager.get_field_stats(game_manager.get_field_id(anchor))
+		if not is_instance_valid(anchor):
+			return {}
+		var field_id := game_manager.get_field_id(anchor)
+		var field := game_manager.get_field_stats(field_id)
 		return {
 			"moves": int(field["moves"]),
 			"undos": int(field["undos"]),
-			"available": mini(game_manager.history.size(), game_manager.undo_charges),
+			"available": mini(game_manager.get_field_history_count(field_id), game_manager.undo_charges),
 		}
+	var field_id := (
+		game_manager.get_field_id(player_one_stock)
+		if is_instance_valid(player_one_stock)
+		else "main"
+	)
 	return {
 		"moves": game_manager.moves_count,
 		"undos": game_manager.undo_count,
-		"available": mini(game_manager.history.size(), game_manager.undo_charges),
+		"available": mini(game_manager.get_field_history_count(field_id), game_manager.undo_charges),
 	}
-
-
 func _apply_slot_statistics(ui: Dictionary, slot: int) -> void:
 	var stats := _get_slot_stats(slot)
 	if stats.is_empty():
