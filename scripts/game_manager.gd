@@ -122,12 +122,16 @@ func get_field_stats(field_id: String) -> Dictionary:
 
 ## Количество записей истории, принадлежащих конкретному полю.
 ## В зеркальной одиночной игре история общая, поэтому считаем записи по полю.
-func get_field_history_count(field_id: String) -> int:
-	var count := 0
+func get_field_history(field_id: String) -> Array[MoveRecord]:
+	var result: Array[MoveRecord] = []
 	for record in history:
 		if _record_field(record) == field_id:
-			count += 1
-	return count
+			result.append(record)
+	return result
+
+
+func get_field_history_count(field_id: String) -> int:
+	return get_field_history(field_id).size()
 
 
 ## Стоимость обычного сброса: 10 ходов, затем +5 за каждый прошлый обычный сброс.
@@ -485,7 +489,8 @@ func analyze_field(field_id: String) -> Dictionary:
 	var predictor := _make_predictor(field_id)
 	if predictor == null:
 		return {}
-	return predictor.analyze(history, mini(history.size(), undo_charges))
+	var field_history := get_field_history(field_id)
+	return predictor.analyze(field_history, mini(field_history.size(), undo_charges))
 
 
 ## Подсказка на hint_moves ходов вперёд для поля. Тратит одну подсказку.
@@ -528,14 +533,18 @@ func _run_analysis() -> void:
 		_analysis_rerun = true   # дождёмся текущего расчёта и пересчитаем
 		return
 	var jobs: Array = []
-	var available := mini(history.size(), undo_charges)
 	for field_id in get_field_ids():
 		var predictor := _make_predictor(field_id)
 		if predictor == null:
 			continue
+		# В зеркальной раскладке ходы двух полей чередуются в одной истории.
+		# Предсказателю передаём только записи этого поля, иначе он посчитает
+		# чужие ходы как шаги отмены и покажет неверное undo_steps_needed.
+		var field_history := get_field_history(field_id)
+		var available := mini(field_history.size(), undo_charges)
 		var undo_states: Array = []
 		for k in range(1, available + 1):
-			var undone: Variant = predictor.state_after_undos(history, k)
+			var undone: Variant = predictor.state_after_undos(field_history, k)
 			if undone == null:
 				break
 			undo_states.append(undone)
