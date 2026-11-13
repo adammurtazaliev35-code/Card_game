@@ -948,9 +948,9 @@ func _refresh_room_ui() -> void:
 	_start_button.disabled = not ready_to_start
 	_update_config_ui()
 	if GDSync.is_host():
-		_set_status("Оба игрока подключены. Можно начинать!" if ready_to_start else "Вы хозяин комнаты. Пригласите второго игрока.")
+		_set_status("Комната готова к запуску." if ready_to_start else "Ожидаем второго игрока.")
 	else:
-		_set_status("Ожидаем, пока хозяин комнаты начнёт игру…")
+		_set_status("Ожидаем запуска партии.")
 
 
 func _copy_room_code() -> void:
