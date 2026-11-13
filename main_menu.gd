@@ -51,7 +51,7 @@ func _ready() -> void:
 	%ModeButton.pressed.connect(_open_modes)
 	%StatsButton.pressed.connect(_on_stats)
 	%SettingsButton.pressed.connect(_on_settings)
-	%QuitButton.pressed.connect(get_tree().quit)
+	%QuitButton.pressed.connect(_on_quit_pressed)
 
 	%KlondikeButton.pressed.connect(_select_mode.bind(MODE_KLONDIKE))
 	%SpiderButton.pressed.connect(_select_mode.bind(MODE_SPIDER))
@@ -122,6 +122,13 @@ func _on_lobby() -> void:
 	var result := get_tree().change_scene_to_file(lobby_scene_path)
 	if result != OK:
 		push_error("MainMenu: не удалось открыть сцену лобби. Код: %d" % result)
+
+func _on_quit_pressed() -> void:
+	# GD-Sync должен завершить ожидающие обращения к аккаунту/облачному хранилищу.
+	if GDSync.account_is_logged_in():
+		GDSync.quit()
+	else:
+		get_tree().quit()
 
 func _build_layout_ui() -> void:
 	var parent := _diff_button.get_parent()
