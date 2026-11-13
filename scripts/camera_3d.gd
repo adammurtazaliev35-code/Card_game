@@ -71,8 +71,23 @@ var _touch_prev_angle := 0.0
 
 
 func _ready() -> void:
+	add_to_group("solitaire_camera")
 	_zoom = start_zoom
 	_zoom_goal = start_zoom
+	_update_camera()
+
+
+## Игрок 2 смотрит на стол с противоположной стороны.
+## Поворот применяется как базовый yaw, поэтому обычные жесты и панорамирование
+## продолжают работать относительно нового направления.
+var _network_yaw_offset := 0.0
+
+
+func set_network_slot(slot: int) -> void:
+	_network_yaw_offset = 180.0 if slot == 2 else 0.0
+	_look = Vector2.ZERO
+	_orbit = Vector2.ZERO
+	_orbit_goal = Vector2.ZERO
 	_update_camera()
 
 
@@ -330,7 +345,7 @@ func _update_camera() -> void:
 		89.0
 	))
 	var offset := Vector3(0.0, sin(p), cos(p)) * _distance()
-	var yaw := _look.x * yaw_max_deg + _orbit.x
+	var yaw := _network_yaw_offset + _look.x * yaw_max_deg + _orbit.x
 	offset = offset.rotated(Vector3.UP, deg_to_rad(yaw))
 
 	global_position = look_point + offset
