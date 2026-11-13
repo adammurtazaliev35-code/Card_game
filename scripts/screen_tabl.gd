@@ -289,6 +289,7 @@ func _on_undo_p2_input_event(
 		_press_undo_slot(2)
 
 
+
 func _press_undo_slot(player_slot: int) -> void:
 	if game_manager == null:
 		return
@@ -296,32 +297,19 @@ func _press_undo_slot(player_slot: int) -> void:
 		return
 
 	if network_session_active:
-		if not network_opponent_connected:
+		if not network_opponent_connected or player_slot != local_player_slot:
 			return
-		if player_slot != local_player_slot:
-			return
-
-		# ВАЖНО: сетевой Undo пока только отправляет запрос.
-		# Сетевой менеджер должен обработать его и отменить ход нужного поля.
 		network_undo_requested.emit(player_slot)
 		return
 
-	# Одиночная игра: прежнее поведение общей истории.
-	if player_slot != 1:
+	var anchor := player_one_stock if player_slot == 1 else player_two_stock
+	if not is_instance_valid(anchor):
 		return
-
-	var available_undos := mini(
-		game_manager.history.size(),
-		game_manager.undo_charges
-	)
-	if available_undos <= 0:
+	var field_id := game_manager.get_field_id(anchor)
+	var available_undos := game_manager.get_field_history_count(field_id)
+	if available_undos <= 0 or game_manager.undo_charges <= 0:
 		return
-
-	game_manager.undo()
-
-
-
-
+	game_manager.undo(true, field_id)
 func _find_area3d(root: Node, target_name: String) -> Area3D:
 	if root == null:
 		return null
@@ -572,13 +560,13 @@ func _refresh_additional_screen() -> void:
 	normal_reset.text = "ОБЫЧНЫЙ СБРОС · %d" % reset_cost
 	normal_reset.disabled = (
 		game_manager.is_dealing
-		or game_manager.history.size() < reset_cost
+		or game_manager.get_field_history_count(field_id) < reset_cost
 	)
 	deadend_reset.visible = verdict == KlondikePredictor.Verdict.DEAD_END
 	surrender.visible = verdict == KlondikePredictor.Verdict.DEAD_END
 	deadend_reset.disabled = (
 		game_manager.is_dealing
-		or game_manager.history.size() < 2
+		or game_manager.get_field_history_count(field_id) < 2
 	)
 	surrender.disabled = game_manager.is_dealing
 	hint_button.disabled = (
