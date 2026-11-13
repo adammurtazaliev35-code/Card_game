@@ -35,6 +35,7 @@ var _applying_remote := false
 var _local_deal_done := false
 var _remote_stats: Dictionary = {}   # slot -> {"moves", "undos", "available", "charges"}
 var _shared_lock_until_ms := 0
+var _lobby_left_for_results := false
 const SHARED_LOCK_MS := 600
 
 
@@ -469,18 +470,30 @@ func _on_client_joined(client_id: int) -> void:
 			_send_snapshot()
 
 
-## Вызывается из окна итогов перед переходом в меню или запуском новой локальной партии.
+## Вызывается после записи результата на локальный аккаунт, перед показом окна итогов.
+## Состояние NetworkMatchState сохраняем до закрытия окна, чтобы отобразить победителя.
+func leave_lobby_for_results() -> void:
+	_leave_gdsync_lobby_once()
+
+
+## Вызывается перед переходом в меню/новую локальную партию.
 ## GD-Sync автоматически удалит комнату, когда её покинут все участники.
 func leave_finished_lobby() -> void:
+	_leave_gdsync_lobby_once()
+	NetworkMatchState.clear()
+	opponent_connected = false
+	_emit_session_state()
+
+
+func _leave_gdsync_lobby_once() -> void:
+	if _lobby_left_for_results:
+		return
 	if GDSync.is_active() and NetworkMatchState.active:
 		if GDSync.is_host():
 			GDSync.lobby_erase_data("NetworkMatch")
 		GDSync.player_erase_data("NetworkMatchActive")
 		GDSync.lobby_leave()
-
-	NetworkMatchState.clear()
-	opponent_connected = false
-	_emit_session_state()
+	_lobby_left_for_results = true
 
 
 func _on_disconnected() -> void:
