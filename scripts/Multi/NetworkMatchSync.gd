@@ -523,10 +523,6 @@ func answer_rematch(accepted: bool) -> void:
 		_start_rematch_as_host()
 	else:
 		# Гость подтверждает приглашение хоста; запуск выполняет хост.
-		if requester_slot != NetworkMatchState.slot_of(int(GDSync.get_host())):
-			push_warning("NetworkMatchSync: только хост может подтвердить запуск новой партии.")
-			rematch_state_changed.emit("ERROR", "Новая партия должна быть запущена хостом.")
-			return
 		GDSync.call_func(_receive_rematch_response, local_slot, request_id, true)
 		rematch_state_changed.emit("WAITING", "Согласие отправлено. Ожидаем запуск от хоста.")
 
@@ -614,7 +610,9 @@ func _start_rematch_as_host() -> void:
 func _receive_rematch_start(seed_value: int, mode: int, draw: int, suits: int) -> void:
 	if not is_network_match() or GDSync.is_host() or _rematch_scene_started:
 		return
-	if int(GDSync.get_sender_id()) != int(GDSync.get_host()):
+	# На этом клиенте уже проверено, что он не хост. В лобби из двух
+	# участников единственный удалённый отправитель и есть текущий хост.
+	if int(GDSync.get_sender_id()) != get_opponent_id():
 		return
 	if not _prepare_rematch_state(seed_value, mode, draw, suits):
 		return
