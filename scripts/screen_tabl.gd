@@ -50,6 +50,10 @@ const FOUNDATION_RANKS := [
 ## двух экранов, AdditionalScreen будет исключён из материала основного экрана.
 @export var screen_model: Node3D
 @export var additional_screen_model: Node3D
+## Необязательно: точные MeshInstance3D экранов. Если назначены, материал
+## ставится только на выбранный меш, а не на все дочерние кнопки/детали модели.
+@export var screen_surface_mesh: MeshInstance3D
+@export var additional_screen_surface_mesh: MeshInstance3D
 @export_range(0, 10, 1) var screen_surface_index := 1
 @export_range(0, 10, 1) var additional_screen_surface_index := 1
 @export_range(0.1, 3.0, 0.1) var emission_energy := 1.3
@@ -688,7 +692,7 @@ const SCREEN_CLICK_LAYER := 1 << 19
 ## Делает экран табло кликабельным: коллизия по мешу экрана (отдельный слой,
 ## карты и стопки её не видят) и данные меша для пересчёта точки в UV.
 func _setup_screen_touch() -> void:
-	_screen_mesh_instance = _find_screen_mesh(screen_model, additional_screen_model, screen_surface_index)
+	_screen_mesh_instance = screen_surface_mesh if is_instance_valid(screen_surface_mesh) else _find_screen_mesh(screen_model, additional_screen_model, screen_surface_index)
 	if _screen_mesh_instance == null or _screen_mesh_instance.mesh == null:
 		return
 	var mesh := _screen_mesh_instance.mesh
@@ -2530,10 +2534,10 @@ func _on_hint_ready(field_id: String, entries: Array) -> void:
 
 
 func _setup_additional_screen_touch() -> void:
-	_additional_screen_mesh_instance = _find_screen_mesh(
-		additional_screen_model,
-		null,
-		additional_screen_surface_index
+	_additional_screen_mesh_instance = (
+		additional_screen_surface_mesh
+		if is_instance_valid(additional_screen_surface_mesh)
+		else _find_screen_mesh(additional_screen_model, null, additional_screen_surface_index)
 	)
 	if _additional_screen_mesh_instance == null or _additional_screen_mesh_instance.mesh == null:
 		return
@@ -2591,12 +2595,18 @@ func _setup_screen_material() -> void:
 	screen_material.set_shader_parameter("emission_energy", emission_energy)
 	screen_material.set_shader_parameter("rotate_clockwise", rotate_clockwise)
 
-	var applied := _apply_screen_material(
-		screen_model,
-		screen_surface_index,
-		screen_material,
-		additional_screen_model
-	)
+	var applied := 0
+	if is_instance_valid(screen_surface_mesh):
+		if screen_surface_mesh.mesh != null and screen_surface_index < screen_surface_mesh.mesh.get_surface_count():
+			screen_surface_mesh.set_surface_override_material(screen_surface_index, screen_material)
+			applied = 1
+	else:
+		applied = _apply_screen_material(
+			screen_model,
+			screen_surface_index,
+			screen_material,
+			additional_screen_model
+		)
 	if applied == 0:
 		push_warning("Screens: не удалось назначить материал основного экрана. Проверь модель и индекс поверхности.")
 	else:
@@ -2616,11 +2626,17 @@ func _setup_additional_screen_material() -> void:
 	additional_screen_material.set_shader_parameter("emission_energy", emission_energy)
 	additional_screen_material.set_shader_parameter("rotate_clockwise", rotate_clockwise)
 
-	var applied := _apply_screen_material(
-		additional_screen_model,
-		additional_screen_surface_index,
-		additional_screen_material
-	)
+	var applied := 0
+	if is_instance_valid(additional_screen_surface_mesh):
+		if additional_screen_surface_mesh.mesh != null and additional_screen_surface_index < additional_screen_surface_mesh.mesh.get_surface_count():
+			additional_screen_surface_mesh.set_surface_override_material(additional_screen_surface_index, additional_screen_material)
+			applied = 1
+	else:
+		applied = _apply_screen_material(
+			additional_screen_model,
+			additional_screen_surface_index,
+			additional_screen_material
+		)
 	if applied == 0:
 		push_warning("Screens: не удалось назначить материал AdditionalScreen. Проверь модель и индекс поверхности.")
 	else:
