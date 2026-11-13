@@ -33,8 +33,12 @@ func _setup_voice_nodes() -> void:
 	if found.size() == 1:
 		first.name = "VoiceChat_P1"
 		var second := first.duplicate() as Node
-		if second == null and ClassDB.class_exists("VoiceChat"):
-			second = ClassDB.instantiate("VoiceChat") as Node
+		if second == null:
+			# VoiceChat is a GDScript class_name, not necessarily a ClassDB native class.
+			var voice_script := first.get_script() as Script
+			if voice_script != null:
+				second = Node.new()
+				second.set_script(voice_script)
 		if second == null:
 			push_warning("NetworkVoiceChat: не удалось создать вторую VoiceChat-ноду. Добавь VoiceChat_P2 вручную.")
 			return
