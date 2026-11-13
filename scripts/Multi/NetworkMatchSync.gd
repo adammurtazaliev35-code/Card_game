@@ -618,6 +618,7 @@ func _receive_rematch_start(seed_value: int, mode: int, draw: int, suits: int) -
 		return
 	if not _prepare_rematch_state(seed_value, mode, draw, suits):
 		return
+	rematch_state_changed.emit("STARTING", "Хост подготовил новую партию. Ожидаем загрузку сцены.")
 	GDSync.call_func(_receive_rematch_ready, local_slot, seed_value)
 
 
