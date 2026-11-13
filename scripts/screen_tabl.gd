@@ -32,17 +32,25 @@ const FOUNDATION_RANKS := [
 	"8", "9", "10", "J", "Q", "K"
 ]
 
-@export_group("Положение первого табло — классика")
+@export_group("Положение табло — одиночная раскладка")
+## Полная сборка первого табло. Координаты применяются в однополевой раскладке,
+## независимо от того, запущен Клондайк, Паук или другой режим.
 @export var screen_rig: Node3D
-@export var classic_position := Vector3.ZERO
-@export var classic_rotation_degrees := Vector3.ZERO
+@export var single_board_position := Vector3.ZERO
+@export var single_board_rotation_degrees := Vector3.ZERO
 
-@export_group("Положение второго табло — одиночная игра")
+@export_group("Положение второго табло — одиночная раскладка")
+## Полная сборка второго табло. В однополевой раскладке оно перемещается
+## в эту позицию (обычно за пределы камеры), а в двухполевой возвращается назад.
 @export var screen_rig_2: Node3D
-## Позиция второго табло в одиночных раскладках Клондайк и Кольцо.
-## Можно переместить его за пределы видимой области.
-@export var single_player_position_2 := Vector3.ZERO
-@export var single_player_rotation_degrees_2 := Vector3.ZERO
+@export var second_board_hidden_position := Vector3.ZERO
+@export var second_board_hidden_rotation_degrees := Vector3.ZERO
+
+## Старые сериализованные значения сохраняются при обновлении сцены, но скрыты.
+@export_storage var classic_position := Vector3.ZERO
+@export_storage var classic_rotation_degrees := Vector3.ZERO
+@export_storage var single_player_position_2 := Vector3.ZERO
+@export_storage var single_player_rotation_degrees_2 := Vector3.ZERO
 
 @export_group("Свечение кнопок")
 @export var button_glow_color := Color("#86E8CF")
@@ -53,24 +61,26 @@ const FOUNDATION_RANKS := [
 @export_range(3.0, 5.0, 1.0) var score_loss_interval := 4.0
 
 @export_group("Основные экраны")
-## Части моделей с поверхностью основного общего табло.
-@export var main_screen_models: Array[Node3D] = []
-## Совместимость со старыми сценами.
-@export var screen_model: Node3D
+## Выбери непосредственно MeshInstance3D с поверхностью основного табло.
+## Все выбранные меши используют одну общую текстуру и SubViewport.
+@export var main_screen_models: Array[MeshInstance3D] = []
 @export_range(0, 10, 1) var screen_surface_index := 1
 @export_range(0.1, 3.0, 0.1) var emission_energy := 1.3
 @export var rotate_clockwise := true
 
 @export_group("Дополнительные экраны игроков")
-## По одному элементу на физический AdditionalScreen каждого игрока.
-@export var additional_screen_models: Array[Node3D] = []
-@export var additional_screen_slots: Array[int] = [1, 2]
-## Совместимость со старыми сценами.
-@export var additional_screen_model: Node3D
+## Выбери непосредственно MeshInstance3D каждого дополнительного экрана.
+## Первый элемент списка принадлежит P1, второй — P2.
+@export var additional_screen_models: Array[MeshInstance3D] = []
 @export_range(0, 10, 1) var additional_screen_surface_index := 1
 @export_range(0.1, 3.0, 0.1) var additional_emission_energy := 1.3
 @export var additional_rotate_clockwise := true
 @export var additional_viewport_resolution := Vector2i(1024, 512)
+
+## Старые ссылки сохраняются для чтения значений из уже сохранённых сцен.
+@export_storage var screen_model: Node3D
+@export_storage var additional_screen_model: Node3D
+@export_storage var additional_screen_slots: Array[int] = [1, 2]
 
 @export_group("Viewport")
 @export var viewport_resolution := Vector2i(1024, 512)
@@ -111,6 +121,17 @@ var last_displayed_second := -1
 
 func _ready() -> void:
 	add_to_group("screens")
+
+	# Переносим старые настройки ригов, чтобы обновление скрипта не сбросило координаты.
+	if single_board_position == Vector3.ZERO and classic_position != Vector3.ZERO:
+		single_board_position = classic_position
+	if single_board_rotation_degrees == Vector3.ZERO and classic_rotation_degrees != Vector3.ZERO:
+		single_board_rotation_degrees = classic_rotation_degrees
+	if second_board_hidden_position == Vector3.ZERO and single_player_position_2 != Vector3.ZERO:
+		second_board_hidden_position = single_player_position_2
+	if second_board_hidden_rotation_degrees == Vector3.ZERO and single_player_rotation_degrees_2 != Vector3.ZERO:
+		second_board_hidden_rotation_degrees = single_player_rotation_degrees_2
+
 	if is_instance_valid(screen_rig):
 		default_screen_position = screen_rig.position
 		default_screen_rotation = screen_rig.rotation_degrees
@@ -120,15 +141,11 @@ func _ready() -> void:
 		default_screen_rotation_2 = screen_rig_2.rotation_degrees
 		screen_default_saved_2 = true
 
-	if main_screen_models.is_empty() and is_instance_valid(screen_model):
-		main_screen_models.append(screen_model)
-	if additional_screen_models.is_empty():
-		if is_instance_valid(additional_screen_model):
-			additional_screen_models.append(additional_screen_model)
-		else:
-			var discovered: Array[Node3D] = []
-			_collect_named_node3d(self, "AdditionalScreen", discovered)
-			additional_screen_models = discovered
+	# Старые сцены могли ссылаться на отдельный MeshInstance3D через одиночные поля.
+	if main_screen_models.is_empty() and screen_model is MeshInstance3D:
+		main_screen_models.append(screen_model as MeshInstance3D)
+	if additional_screen_models.is_empty() and additional_screen_model is MeshInstance3D:
+		additional_screen_models.append(additional_screen_model as MeshInstance3D)
 
 	_setup_viewport()
 	_setup_additional_viewports()
@@ -194,22 +211,23 @@ func request_create_lobby() -> void:
 # DISPLAY TRANSFORM
 # ==================================================
 func _apply_display_transform() -> void:
+	var single_board_layout := (
+		display_mode == DisplayMode.CLASSIC
+		or display_mode == DisplayMode.RING
+	)
+
 	if is_instance_valid(screen_rig):
-		if display_mode == DisplayMode.CLASSIC:
-			screen_rig.position = classic_position
-			screen_rig.rotation_degrees = classic_rotation_degrees
+		if single_board_layout:
+			screen_rig.position = single_board_position
+			screen_rig.rotation_degrees = single_board_rotation_degrees
 		elif screen_default_saved:
 			screen_rig.position = default_screen_position
 			screen_rig.rotation_degrees = default_screen_rotation
 
 	if is_instance_valid(screen_rig_2):
-		var single_board_mode := (
-			display_mode == DisplayMode.CLASSIC
-			or display_mode == DisplayMode.RING
-		)
-		if single_board_mode:
-			screen_rig_2.position = single_player_position_2
-			screen_rig_2.rotation_degrees = single_player_rotation_degrees_2
+		if single_board_layout:
+			screen_rig_2.position = second_board_hidden_position
+			screen_rig_2.rotation_degrees = second_board_hidden_rotation_degrees
 		elif screen_default_saved_2:
 			screen_rig_2.position = default_screen_position_2
 			screen_rig_2.rotation_degrees = default_screen_rotation_2
@@ -380,30 +398,36 @@ func _si(value: float) -> int:
 func _setup_additional_viewports() -> void:
 	var models := _get_additional_screen_models()
 	if models.is_empty():
-		push_warning("Screens: не назначены AdditionalScreen для игроков.")
+		push_warning("Screens: не назначены MeshInstance3D дополнительных экранов.")
 		return
-	var safe_resolution := Vector2i(maxi(1, additional_viewport_resolution.x), maxi(1, additional_viewport_resolution.y))
-	for i in range(models.size()):
+	if models.size() > 2:
+		push_warning("Screens: дополнительных экранов больше двух. Используются первые два.")
+
+	var safe_resolution := Vector2i(
+		maxi(1, additional_viewport_resolution.x),
+		maxi(1, additional_viewport_resolution.y)
+	)
+	for i in range(mini(models.size(), 2)):
 		var model := models[i]
-		if not is_instance_valid(model):
-			continue
-		var slot := additional_screen_slots[i] if i < additional_screen_slots.size() else i + 1
-		slot = clampi(slot, 1, 2)
-		if not _additional_entry_for_slot(slot).is_empty():
-			push_warning("Screens: слот AdditionalScreen %d указан дважды." % slot)
-			continue
+		var slot := i + 1
 		var viewport := SubViewport.new()
 		viewport.name = "AdditionalScreenViewport_P%d" % slot
 		viewport.size = safe_resolution
 		viewport.transparent_bg = false
 		viewport.render_target_update_mode = SubViewport.UPDATE_ALWAYS
 		add_child(viewport)
+
 		var ui := _build_additional_screen_ui(viewport, slot)
 		additional_screen_entries.append({
-			"slot": slot, "model": model, "viewport": viewport, "ui": ui,
-			"material": null, "mesh_instance": null, "mdt": null, "click_area": null
+			"slot": slot,
+			"model": model,
+			"viewport": viewport,
+			"ui": ui,
+			"material": null,
+			"mesh_instance": model,
+			"mdt": null,
+			"click_area": null
 		})
-
 
 func _build_additional_screen_ui(viewport: SubViewport, slot: int) -> Dictionary:
 	var previous_scale := ui_scale
@@ -476,58 +500,46 @@ func _build_additional_screen_ui(viewport: SubViewport, slot: int) -> Dictionary
 func _setup_additional_screen_material() -> void:
 	for i in range(additional_screen_entries.size()):
 		var entry: Dictionary = additional_screen_entries[i]
+		var mesh_instance: MeshInstance3D = entry["model"]
+		var viewport: SubViewport = entry["viewport"]
 		var material := ShaderMaterial.new()
 		material.shader = SCREEN_SHADER
-		material.set_shader_parameter("screen_texture", (entry["viewport"] as SubViewport).get_texture())
+		material.set_shader_parameter("screen_texture", viewport.get_texture())
 		material.set_shader_parameter("emission_energy", additional_emission_energy)
 		material.set_shader_parameter("rotate_clockwise", additional_rotate_clockwise)
 		entry["material"] = material
-		var applied := _apply_screen_material(
-			entry["model"],
-			additional_screen_surface_index,
-			material,
-			true
-		)
-		additional_screen_entries[i] = entry
-		if applied == 0:
-			push_warning("Screens: не удалось назначить материал AdditionalScreen P%d." % int(entry["slot"]))
+
+		if not _screen_mesh_supports_surface(mesh_instance, additional_screen_surface_index):
+			push_warning("Screens: AdditionalScreen P%d не содержит поверхность %d." % [
+				int(entry["slot"]),
+				additional_screen_surface_index
+			])
 		else:
-			print("Screens: AdditionalScreen P%d — мешей: %d" % [int(entry["slot"]), applied])
+			mesh_instance.set_surface_override_material(additional_screen_surface_index, material)
+			print("Screens: материал AdditionalScreen P%d назначен." % int(entry["slot"]))
+		additional_screen_entries[i] = entry
 
-
-func _get_main_screen_models() -> Array[Node3D]:
-	var result: Array[Node3D] = []
-	for model in main_screen_models:
-		if is_instance_valid(model) and not result.has(model):
-			result.append(model)
-	if result.is_empty() and is_instance_valid(screen_model):
-		result.append(screen_model)
+func _get_main_screen_models() -> Array[MeshInstance3D]:
+	var result: Array[MeshInstance3D] = []
+	for mesh_instance in main_screen_models:
+		if is_instance_valid(mesh_instance) and mesh_instance.mesh != null and not result.has(mesh_instance):
+			result.append(mesh_instance)
 	return result
 
-
-func _get_additional_screen_models() -> Array[Node3D]:
-	var result: Array[Node3D] = []
-	for model in additional_screen_models:
-		if is_instance_valid(model) and not result.has(model):
-			result.append(model)
-	if result.is_empty() and is_instance_valid(additional_screen_model):
-		result.append(additional_screen_model)
+func _get_additional_screen_models() -> Array[MeshInstance3D]:
+	var result: Array[MeshInstance3D] = []
+	for mesh_instance in additional_screen_models:
+		if is_instance_valid(mesh_instance) and mesh_instance.mesh != null and not result.has(mesh_instance):
+			result.append(mesh_instance)
 	return result
 
-
-func _collect_named_node3d(root: Node, target_name: String, result: Array[Node3D]) -> void:
-	if root is Node3D and root.name == target_name:
-		result.append(root as Node3D)
-	for child in root.get_children():
-		_collect_named_node3d(child, target_name, result)
 
 
 func _is_additional_screen_root(node: Node) -> bool:
-	for model in _get_additional_screen_models():
-		if node == model:
+	for mesh_instance in _get_additional_screen_models():
+		if node == mesh_instance:
 			return true
 	return false
-
 
 func _additional_entry_for_slot(slot: int) -> Dictionary:
 	for entry in additional_screen_entries:
@@ -1103,11 +1115,9 @@ func _setup_screen_touch() -> void:
 	var models := _get_main_screen_models()
 	if models.is_empty():
 		return
-	_screen_mesh_instance = _find_screen_mesh(models[0])
-	if _screen_mesh_instance == null or _screen_mesh_instance.mesh == null:
-		return
+	_screen_mesh_instance = models[0]
 	var mesh := _screen_mesh_instance.mesh
-	if not mesh is ArrayMesh or screen_surface_index >= mesh.get_surface_count():
+	if mesh == null or not mesh is ArrayMesh or screen_surface_index >= mesh.get_surface_count():
 		return
 	_screen_mdt = MeshDataTool.new()
 	if _screen_mdt.create_from_surface(mesh as ArrayMesh, screen_surface_index) != OK:
@@ -1126,13 +1136,15 @@ func _setup_screen_touch() -> void:
 func _setup_additional_screen_touch() -> void:
 	for i in range(additional_screen_entries.size()):
 		var entry: Dictionary = additional_screen_entries[i]
-		var mesh_instance := _find_screen_mesh_for_surface(entry["model"], additional_screen_surface_index)
-		if mesh_instance == null or mesh_instance.mesh == null:
-			push_warning("Screens: не найдена поверхность касания AdditionalScreen P%d." % int(entry["slot"]))
-			continue
+		var mesh_instance: MeshInstance3D = entry["model"]
 		var mesh := mesh_instance.mesh
-		if not mesh is ArrayMesh or additional_screen_surface_index >= mesh.get_surface_count():
+		if mesh == null or not mesh is ArrayMesh or additional_screen_surface_index >= mesh.get_surface_count():
+			push_warning("Screens: AdditionalScreen P%d не поддерживает поверхность касания %d." % [
+				int(entry["slot"]),
+				additional_screen_surface_index
+			])
 			continue
+
 		var mdt := MeshDataTool.new()
 		if mdt.create_from_surface(mesh as ArrayMesh, additional_screen_surface_index) != OK:
 			continue
@@ -1145,34 +1157,20 @@ func _setup_additional_screen_touch() -> void:
 		shape.shape = mesh.create_trimesh_shape()
 		click_area.add_child(shape)
 		mesh_instance.add_child(click_area)
+
 		entry["mesh_instance"] = mesh_instance
 		entry["mdt"] = mdt
 		entry["click_area"] = click_area
 		additional_screen_entries[i] = entry
 
-func _find_screen_mesh(node: Node) -> MeshInstance3D:
-	if node == null or _is_additional_screen_root(node):
-		return null
-	if node is MeshInstance3D and (node as MeshInstance3D).mesh != null \
-			and screen_surface_index < (node as MeshInstance3D).mesh.get_surface_count():
-		return node as MeshInstance3D
-	for child in node.get_children():
-		var found := _find_screen_mesh(child)
-		if found != null:
-			return found
-	return null
+func _screen_mesh_supports_surface(mesh_instance: MeshInstance3D, surface_index: int) -> bool:
+	return (
+		is_instance_valid(mesh_instance)
+		and mesh_instance.mesh != null
+		and surface_index >= 0
+		and surface_index < mesh_instance.mesh.get_surface_count()
+	)
 
-func _find_screen_mesh_for_surface(node: Node, surface_index: int) -> MeshInstance3D:
-	if node == null:
-		return null
-	if node is MeshInstance3D and (node as MeshInstance3D).mesh != null \
-			and surface_index < (node as MeshInstance3D).mesh.get_surface_count():
-		return node as MeshInstance3D
-	for child in node.get_children():
-		var found := _find_screen_mesh_for_surface(child, surface_index)
-		if found != null:
-			return found
-	return null
 
 
 func _unhandled_input(event: InputEvent) -> void:
@@ -2821,36 +2819,30 @@ func _update_time_label() -> void:
 func _setup_screen_material() -> void:
 	var models := _get_main_screen_models()
 	if models.is_empty():
-		push_warning("Screens: не назначены модели основных экранов.")
+		push_warning("Screens: в Main Screen Models не назначены MeshInstance3D.")
 		return
+
 	screen_material = ShaderMaterial.new()
 	screen_material.shader = SCREEN_SHADER
 	screen_material.set_shader_parameter("screen_texture", screen_viewport.get_texture())
 	screen_material.set_shader_parameter("emission_energy", emission_energy)
 	screen_material.set_shader_parameter("rotate_clockwise", rotate_clockwise)
-	var total_applied := 0
-	for model in models:
-		total_applied += _apply_screen_material(model, screen_surface_index, screen_material)
-	if total_applied == 0:
-		push_warning("Screens: не удалось назначить основной материал. Проверь модели и индекс поверхности.")
-	else:
-		print("Screens: основной материал назначен. Мешей: ", total_applied)
 
-func _apply_screen_material(
-	node: Node,
-	surface_index: int,
-	material: Material,
-	allow_additional_root: bool = false
-) -> int:
-	if node == null or (not allow_additional_root and _is_additional_screen_root(node)):
-		return 0
 	var applied := 0
-	if node is MeshInstance3D:
-		var mesh_instance := node as MeshInstance3D
-		if mesh_instance.mesh != null and surface_index < mesh_instance.mesh.get_surface_count():
-			mesh_instance.set_surface_override_material(surface_index, material)
-			applied += 1
-	for child in node.get_children():
-		applied += _apply_screen_material(child, surface_index, material, false)
-	return applied
+	for mesh_instance in models:
+		if not _screen_mesh_supports_surface(mesh_instance, screen_surface_index):
+			push_warning("Screens: основной экран %s не содержит поверхность %d." % [
+				mesh_instance.name,
+				screen_surface_index
+			])
+			continue
+		mesh_instance.set_surface_override_material(screen_surface_index, screen_material)
+		applied += 1
+
+	if applied == 0:
+		push_warning("Screens: не удалось назначить основной материал. Проверь выбранные меши и индекс поверхности.")
+	else:
+		print("Screens: основной материал назначен на физических экранах: ", applied)
+
+
 
