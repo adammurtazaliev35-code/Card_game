@@ -71,8 +71,8 @@ var default_screen_rotation := Vector3.ZERO
 var screen_default_saved := false
 
 var game_manager: GameManager
-var undo_button_p1: Area3D
-var undo_button_p2: Area3D
+var undo_buttons_p1: Array[Area3D] = []
+var undo_buttons_p2: Array[Area3D] = []
 var screen_viewport: SubViewport
 var screen_material: ShaderMaterial
 var additional_screen_viewport: SubViewport
@@ -188,33 +188,43 @@ func _apply_display_transform() -> void:
 # ==================================================
 # UNDO BUTTONS
 # ==================================================
+
 func _setup_undo_buttons() -> void:
-	undo_button_p1 = _find_area3d(screen_model, "UndoBtnP1")
-	if undo_button_p1 == null:
-		undo_button_p1 = _find_area3d(self, "UndoBtnP1")
+	undo_buttons_p1.clear()
+	undo_buttons_p2.clear()
+	_collect_areas3d(screen_model, "UndoBtnP1", undo_buttons_p1)
+	_collect_areas3d(screen_model, "UndoBtnP2", undo_buttons_p2)
+	if undo_buttons_p1.is_empty():
+		_collect_areas3d(self, "UndoBtnP1", undo_buttons_p1)
+	if undo_buttons_p2.is_empty():
+		_collect_areas3d(self, "UndoBtnP2", undo_buttons_p2)
 
-	undo_button_p2 = _find_area3d(screen_model, "UndoBtnP2")
-	if undo_button_p2 == null:
-		undo_button_p2 = _find_area3d(self, "UndoBtnP2")
+	for button in undo_buttons_p1:
+		button.input_ray_pickable = true
+		if not button.input_event.is_connected(_on_undo_p1_input_event):
+			button.input_event.connect(_on_undo_p1_input_event)
+		_apply_button_glow(button)
 
-	if undo_button_p1 != null:
-		undo_button_p1.input_ray_pickable = true
-		if not undo_button_p1.input_event.is_connected(_on_undo_p1_input_event):
-			undo_button_p1.input_event.connect(_on_undo_p1_input_event)
-	else:
+	for button in undo_buttons_p2:
+		button.input_ray_pickable = true
+		if not button.input_event.is_connected(_on_undo_p2_input_event):
+			button.input_event.connect(_on_undo_p2_input_event)
+		_apply_button_glow(button)
+
+	if undo_buttons_p1.is_empty():
 		push_warning("Screens: UndoBtnP1 не найден.")
-
-	if undo_button_p2 != null:
-		undo_button_p2.input_ray_pickable = true
-		if not undo_button_p2.input_event.is_connected(_on_undo_p2_input_event):
-			undo_button_p2.input_event.connect(_on_undo_p2_input_event)
-	else:
+	if undo_buttons_p2.is_empty():
 		push_warning("Screens: UndoBtnP2 не найден.")
-
-	_apply_button_glow(undo_button_p1)
-	_apply_button_glow(undo_button_p2)
 	_refresh_undo_buttons()
 
+
+func _collect_areas3d(root: Node, target_name: String, result: Array[Area3D]) -> void:
+	if root == null or root == additional_screen_model:
+		return
+	if root is Area3D and root.name == target_name:
+		result.append(root as Area3D)
+	for child in root.get_children():
+		_collect_areas3d(child, target_name, result)
 func _apply_button_glow(root: Node) -> void:
 	if root == null:
 		return
@@ -244,23 +254,24 @@ func _apply_button_glow(root: Node) -> void:
 
 		mesh_instance.set_surface_override_material(surface, glow_material)
 
+
 func _refresh_undo_buttons() -> void:
-	# В одиночной игре используется только P1.
-	# В сетевой каждый клиент может нажимать только кнопку своего поля.
-	if is_instance_valid(undo_button_p1):
-		undo_button_p1.input_ray_pickable = (
-			(not network_session_active)
-			or (network_opponent_connected and local_player_slot == 1)
-		)
+	# Если основной экран продублирован для обоих игроков, все его физические
+	# копии кнопок должны работать одинаково.
+	for button in undo_buttons_p1:
+		if is_instance_valid(button):
+			button.input_ray_pickable = (
+				not network_session_active
+				or (network_opponent_connected and local_player_slot == 1)
+			)
 
-	if is_instance_valid(undo_button_p2):
-		undo_button_p2.input_ray_pickable = (
-			network_session_active
-			and network_opponent_connected
-			and local_player_slot == 2
-		)
-
-
+	for button in undo_buttons_p2:
+		if is_instance_valid(button):
+			button.input_ray_pickable = (
+				network_session_active
+				and network_opponent_connected
+				and local_player_slot == 2
+			)
 func _on_undo_p1_input_event(
 	_camera: Camera3D,
 	event: InputEvent,
