@@ -70,17 +70,18 @@ func _show_hint(entries: Array) -> void:
 		return
 
 	var first: Dictionary = entries[0]
+	var move: Dictionary = first.get("move", {})
 	var source := first.get("from_pile") as Pile
 	var target := first.get("to_pile") as Pile
 	if not is_instance_valid(source):
 		return
 
-	# Подсказки колоды/переворота сброса тоже показывают саму карту,
-	# а не большой маркер или стрелку.
+	# В predictor тип действия draw/recycle лежит внутри вложенного словаря move.
+	# Для таких действий цель и источник определяем по типу действия.
 	var card_source := source
-	if first.has("draw"):
+	if move.has("draw"):
 		target = _find_field_pile(source, PileMarker.Kind.WASTE)
-	elif first.has("recycle"):
+	elif move.has("recycle"):
 		card_source = _find_field_pile(source, PileMarker.Kind.WASTE)
 		target = source
 
