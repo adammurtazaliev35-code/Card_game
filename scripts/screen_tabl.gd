@@ -851,9 +851,9 @@ func _setup_camera_action_hud() -> void:
 	camera_action_hud_p1 = _create_camera_action_hud_player(bottom_row, 1)
 	camera_action_hud_p2 = _create_camera_action_hud_player(bottom_row, 2)
 	(camera_action_hud_p1["hint"] as Button).pressed.connect(_on_player_hint.bind(player_one_ui))
-	(camera_action_hud_p1["reset"] as Button).pressed.connect(_on_player_reset.bind(player_one_ui))
+	(camera_action_hud_p1["reset"] as Button).pressed.connect(_on_camera_action_hud_reset.bind(player_one_ui))
 	(camera_action_hud_p2["hint"] as Button).pressed.connect(_on_player_hint.bind(player_two_ui))
-	(camera_action_hud_p2["reset"] as Button).pressed.connect(_on_player_reset.bind(player_two_ui))
+	(camera_action_hud_p2["reset"] as Button).pressed.connect(_on_camera_action_hud_reset.bind(player_two_ui))
 	_refresh_camera_action_hud()
 
 
@@ -914,14 +914,14 @@ func _create_camera_action_button(caption: String) -> Button:
 func refresh_camera_action_hud() -> void:
 	if not is_instance_valid(camera_action_hud_root):
 		return
-	var enabled := GameSettings.show_game_action_hud
+	var enabled := GameSettings.show_game_action_hud and game_manager != null
 	camera_action_hud_root.visible = enabled
 	if not enabled:
 		return
 
-	var multiplayer := display_mode == DisplayMode.MULTIPLAYER
-	var show_p1 := not multiplayer or not network_session_active or local_player_slot == 1
-	var show_p2 := multiplayer and (not network_session_active or local_player_slot == 2)
+	var is_multiplayer_layout := display_mode == DisplayMode.MULTIPLAYER
+	var show_p1 := not is_multiplayer_layout or not network_session_active or local_player_slot == 1
+	var show_p2 := is_multiplayer_layout and (not network_session_active or local_player_slot == 2)
 	(camera_action_hud_p1["root"] as Control).visible = show_p1
 	(camera_action_hud_p2["root"] as Control).visible = show_p2
 	if game_manager == null:
@@ -945,10 +945,25 @@ func refresh_camera_action_hud() -> void:
 		var info: Dictionary = game_manager.field_verdicts.get(field_id, {}) if local_field else {}
 		var is_dead_end := int(info.get("verdict", -1)) == KlondikePredictor.Verdict.DEAD_END
 		var supports_reset := game_manager.rules is KlondikeRules or game_manager.rules is SpiderRules
-		var can_reset := supports_reset and GameSession.allow_deadend_reset and local_field and (is_dead_end or history_count >= normal_cost)
+		# HUD-кнопка запускает только обычный сброс. Тупиковый сброс остаётся
+		# отдельным действием на физическом табло и не подменяет эту кнопку.
+		var can_normal_reset := supports_reset and GameSession.allow_deadend_reset and local_field and history_count >= normal_cost
 		var reset := hud["reset"] as Button
-		reset.disabled = busy or not can_reset
-		reset.text = "ТУПИК" if is_dead_end else "СБРОС %d" % normal_cost
+		reset.disabled = busy or not can_normal_reset
+		reset.text = "СБРОС %d" % normal_cost
+
+
+func _on_camera_action_hud_reset(ui: Dictionary) -> void:
+	if game_manager == null or not GameSession.allow_deadend_reset:
+		return
+	if not (game_manager.rules is KlondikeRules or game_manager.rules is SpiderRules):
+		return
+	var field_id := _player_field_id(ui)
+	if field_id.is_empty() or not _is_local_field(field_id):
+		return
+	game_manager.normal_reset_field(field_id)
+	_refresh_additional_screens()
+	_refresh_player_actions()
 
 
 func _setup_viewport() -> void:
