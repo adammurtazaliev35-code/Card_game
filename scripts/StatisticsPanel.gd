@@ -98,53 +98,48 @@ func _build() -> void:
 	content.add_child(HSeparator.new())
 
 	var data: Dictionary = GameStatistics.get_summary()
-	var won := int(data.get("games_won", 0))
-	var lost := int(data.get("games_lost", 0))
-	var completed := won + lost
-	var win_rate := 100.0 * float(won) / float(completed) if completed > 0 else 0.0
-	var avg_moves := float(data.get("total_moves", 0)) / float(won) if won > 0 else 0.0
-	var avg_seconds := float(data.get("total_win_seconds", 0)) / float(won) if won > 0 else 0.0
+	var by_type: Dictionary = data.get("by_type", {})
+	var deadends_by_type: Dictionary = data.get("deadends_by_type", {})
 
-	content.add_child(_section_title("ОБЩИЕ РЕЗУЛЬТАТЫ"))
-	var grid := GridContainer.new()
-	grid.columns = 2 if use_two_columns else 1
-	grid.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	grid.add_theme_constant_override("h_separation", 12)
-	grid.add_theme_constant_override("v_separation", 10)
-	content.add_child(grid)
-
-	_add_metric(grid, "СЫГРАНО", str(completed), "Завершённые партии")
-	_add_metric(grid, "ПОБЕДЫ", str(won), "Успешные партии")
-	_add_metric(grid, "ПОБЕД", "%.1f%%" % win_rate, "Доля побед")
-	_add_metric(grid, "ПОРАЖЕНИЯ", str(lost), "Завершились неудачей")
-	_add_metric(grid, "СЕРИЯ СЕЙЧАС", str(int(data.get("current_streak", 0))), "Побед подряд")
-	_add_metric(grid, "ЛУЧШАЯ СЕРИЯ", str(int(data.get("best_streak", 0))), "Рекорд побед подряд")
-
-	content.add_child(_section_title("РЕКОРДЫ И СРЕДНИЕ ПОКАЗАТЕЛИ"))
-	var records := GridContainer.new()
-	records.columns = 2 if use_two_columns else 1
-	records.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	records.add_theme_constant_override("h_separation", 12)
-	records.add_theme_constant_override("v_separation", 8)
-	content.add_child(records)
-	_add_record_row(records, "Лучшее время", _format_time(int(data.get("best_time", 0))))
-	_add_record_row(records, "Минимум ходов", _positive_or_dash(int(data.get("best_moves", 0))))
-	_add_record_row(records, "Среднее время победы", _format_time(roundi(avg_seconds)))
-	_add_record_row(records, "Среднее число ходов", "%.1f" % avg_moves if won > 0 else "—")
-	_add_record_row(records, "Всего ходов в победах", str(int(data.get("total_moves", 0))))
-	_add_record_row(records, "Использовано отмен", str(int(data.get("total_undos", 0))))
+	_add_type_section(
+		content,
+		"ОДИНОЧНАЯ ИГРА",
+		by_type.get("solo", {}),
+		int(deadends_by_type.get("solo", 0)),
+		use_two_columns
+	)
+	content.add_child(HSeparator.new())
+	_add_type_section(
+		content,
+		"СЕТЕВАЯ ИГРА",
+		by_type.get("network", {}),
+		int(deadends_by_type.get("network", 0)),
+		use_two_columns
+	)
 
 	content.add_child(HSeparator.new())
-	content.add_child(_section_title("ПО РЕЖИМАМ"))
-	var mode_grid := GridContainer.new()
-	mode_grid.columns = 2 if use_two_columns else 1
-	mode_grid.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	mode_grid.add_theme_constant_override("h_separation", 12)
-	mode_grid.add_theme_constant_override("v_separation", 10)
-	content.add_child(mode_grid)
-	var modes: Dictionary = data.get("per_mode", {})
-	_add_mode_card(mode_grid, "КЛОНДАЙК", modes.get("2", {}))
-	_add_mode_card(mode_grid, "ПАУК", modes.get("1", {}))
+	content.add_child(_section_title("ТУПИКОВЫЕ ПАРТИИ"))
+	var deadlock_grid := GridContainer.new()
+	deadlock_grid.columns = 2 if use_two_columns else 1
+	deadlock_grid.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	deadlock_grid.add_theme_constant_override("h_separation", 12)
+	deadlock_grid.add_theme_constant_override("v_separation", 10)
+	content.add_child(deadlock_grid)
+	_add_metric(deadlock_grid, "ВСЕГО ТУПИКОВ", str(int(data.get("deadends", 0))), "Не входят в число поражений")
+	_add_metric(deadlock_grid, "ОДИНОЧНЫЕ", str(int(deadends_by_type.get("solo", 0))), "Завершились тупиком")
+	_add_metric(deadlock_grid, "СЕТЕВЫЕ", str(int(deadends_by_type.get("network", 0))), "Завершились тупиком")
+
+	var legacy: Dictionary = data.get("legacy_mixed", {})
+	var legacy_started := int(legacy.get("games_started", 0))
+	var legacy_won := int(legacy.get("games_won", 0))
+	var legacy_lost := int(legacy.get("games_lost", 0))
+	if legacy_started + legacy_won + legacy_lost > 0:
+		content.add_child(_section_title("СТАРАЯ СТАТИСТИКА ДО РАЗДЕЛЕНИЯ"))
+		_add_record_row(
+			deadlock_grid,
+			"Смешанные партии",
+			"начато %d · побед %d · поражений %d" % [legacy_started, legacy_won, legacy_lost]
+		)
 
 	var footer := HBoxContainer.new()
 	footer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -160,6 +155,65 @@ func _build() -> void:
 	footer_close.pressed.connect(close)
 	footer.add_child(footer_close)
 	footer_close.grab_focus()
+
+
+func _add_type_section(
+	parent: VBoxContainer,
+	section_title: String,
+	value: Variant,
+	deadends: int,
+	use_two_columns: bool
+) -> void:
+	var track: Dictionary = value if value is Dictionary else {}
+	var started := int(track.get("started", 0))
+	var won := int(track.get("won", 0))
+	var lost := int(track.get("lost", 0))
+	var completed := won + lost
+	var rate := 100.0 * float(won) / float(completed) if completed > 0 else 0.0
+	var average_moves := float(track.get("total_moves", 0)) / float(won) if won > 0 else 0.0
+	var average_seconds := float(track.get("total_win_seconds", 0)) / float(won) if won > 0 else 0.0
+
+	parent.add_child(_section_title(section_title))
+	var grid := GridContainer.new()
+	grid.columns = 2 if use_two_columns else 1
+	grid.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	grid.add_theme_constant_override("h_separation", 12)
+	grid.add_theme_constant_override("v_separation", 10)
+	parent.add_child(grid)
+	_add_metric(grid, "НАЧАТО", str(started), "Всего партий")
+	_add_metric(grid, "ПОБЕДЫ", str(won), "Успешные партии")
+	_add_metric(grid, "ПОБЕД", "%.1f%%" % rate, "Расчёт без тупиков")
+	_add_metric(grid, "ПОРАЖЕНИЯ", str(lost), "Обычные поражения")
+	_add_metric(grid, "ТУПИКИ", str(deadends), "Отдельно от поражений")
+	_add_metric(grid, "СЕРИЯ ПОБЕД", "%d / %d" % [
+		int(track.get("current_streak", 0)),
+		int(track.get("best_streak", 0))
+	], "Текущая / лучшая")
+
+	parent.add_child(_section_title("РЕКОРДЫ · " + section_title))
+	var records := GridContainer.new()
+	records.columns = 2 if use_two_columns else 1
+	records.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	records.add_theme_constant_override("h_separation", 12)
+	records.add_theme_constant_override("v_separation", 8)
+	parent.add_child(records)
+	_add_record_row(records, "Лучшее время", _format_time(int(track.get("best_time", 0))))
+	_add_record_row(records, "Минимум ходов", _positive_or_dash(int(track.get("best_moves", 0))))
+	_add_record_row(records, "Среднее время победы", _format_time(roundi(average_seconds)))
+	_add_record_row(records, "Среднее число ходов", "%.1f" % average_moves if won > 0 else "—")
+	_add_record_row(records, "Ходов в победах", str(int(track.get("total_moves", 0))))
+	_add_record_row(records, "Использовано отмен", str(int(track.get("total_undos", 0))))
+
+	parent.add_child(_section_title("ПО РЕЖИМАМ · " + section_title))
+	var modes_grid := GridContainer.new()
+	modes_grid.columns = 2 if use_two_columns else 1
+	modes_grid.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	modes_grid.add_theme_constant_override("h_separation", 12)
+	modes_grid.add_theme_constant_override("v_separation", 10)
+	parent.add_child(modes_grid)
+	var modes: Dictionary = track.get("per_mode", {})
+	_add_mode_card(modes_grid, "КЛОНДАЙК", modes.get("2", {}))
+	_add_mode_card(modes_grid, "ПАУК", modes.get("1", {}))
 
 
 func _section_title(value: String) -> Label:
@@ -211,6 +265,7 @@ func _add_mode_card(parent: GridContainer, title_text: String, value: Variant) -
 	var mode_data: Dictionary = value if value is Dictionary else {}
 	var won := int(mode_data.get("won", 0))
 	var lost := int(mode_data.get("lost", 0))
+	var deadends := int(mode_data.get("deadends", 0))
 	var played := won + lost
 	var rate := 100.0 * float(won) / float(played) if played > 0 else 0.0
 	var average_moves := float(mode_data.get("total_moves", 0)) / float(won) if won > 0 else 0.0
@@ -227,6 +282,7 @@ func _add_mode_card(parent: GridContainer, title_text: String, value: Variant) -
 	card.add_child(box)
 	box.add_child(_label(title_text, 16, GOLD))
 	box.add_child(_label("Партии: %d   ·   Победы: %d   ·   Поражения: %d" % [played, won, lost], 12, TEXT))
+	box.add_child(_label("Тупики: %d · не входят в процент" % deadends, 11, MUTED))
 	box.add_child(_label("Процент побед: %.1f%%" % rate, 12, TEXT))
 	box.add_child(_label("Рекорд времени: %s" % _format_time(int(mode_data.get("best_time", 0))), 12, MUTED))
 	box.add_child(_label("Минимум ходов: %s" % _positive_or_dash(int(mode_data.get("best_moves", 0))), 12, MUTED))

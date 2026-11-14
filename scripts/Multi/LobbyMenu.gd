@@ -26,6 +26,8 @@ var _config_hint: Label
 var _deal_same_deck := false
 var _deal_winnable := true
 var _deal_same_layout := false
+var _allow_deadend_reset := true
+var _reset_toggle: CheckButton
 var _deal_options_box: VBoxContainer
 var _same_deck_toggle: CheckButton
 var _winnable_toggle: CheckButton
@@ -299,6 +301,9 @@ func _build_interface() -> void:
 	for toggle in [_same_deck_toggle, _winnable_toggle, _same_layout_toggle]:
 		toggle.toggled.connect(func(_on: bool): _on_deal_option_changed())
 		_deal_options_box.add_child(toggle)
+	_reset_toggle = _make_toggle("Разрешить сброс при тупике", _allow_deadend_reset)
+	_reset_toggle.toggled.connect(_on_reset_option_changed)
+	settings_tab.add_child(_reset_toggle)
 	_config_hint = _make_label("В сетевой партии классическая раскладка недоступна: нужны две игровые стороны.", 11, GameSettings.get_color("muted"))
 	settings_tab.add_child(_config_hint)
 
@@ -451,6 +456,8 @@ func _init_lobby_settings() -> void:
 	if _selected_layout == GameSession.BOARD_LAYOUT_CLASSIC:
 		_selected_layout = GameSession.BOARD_LAYOUT_MIRRORED
 	_selected_draw_mode = int(GameSession.effective_draw_mode())
+	_allow_deadend_reset = GameSession.get_deadend_reset_allowed(_selected_mode)
+	GameSession.allow_deadend_reset = _allow_deadend_reset
 
 
 func _on_mode_selected(index: int) -> void:
@@ -523,6 +530,13 @@ func _update_config_ui() -> void:
 	_mode_selector.disabled = not can_edit
 	_layout_selector.disabled = not can_edit
 	_draw_selector.disabled = not can_edit
+	var force_reset := (
+		_selected_mode == MODE_KLONDIKE
+		and _selected_layout == GameSession.BOARD_LAYOUT_MIRRORED
+		and _deal_winnable
+	)
+	_reset_toggle.set_pressed_no_signal(_allow_deadend_reset or force_reset)
+	_reset_toggle.disabled = not can_edit or force_reset
 	if _deal_options_box != null:
 		for toggle in [_same_deck_toggle, _winnable_toggle, _same_layout_toggle]:
 			toggle.disabled = not can_edit
@@ -539,9 +553,14 @@ func _publish_lobby_configuration() -> void:
 	_room_title.text = "КОМНАТА · %s" % _selected_mode_name()
 
 
-## Опции раздачи одним числом: 1 — одинаковая колода, 2 — выигрышная, 4 — одинаковая раскидка.
+## Опции раздачи: 1 — одинаковая колода, 2 — выигрышная, 4 — одинаковая раскидка, 8 — разрешён тупиковый сброс.
 func _deal_options_mask() -> int:
-	return (1 if _deal_same_deck else 0) | (2 if _deal_winnable else 0) | (4 if _deal_same_layout else 0)
+	return (
+		(1 if _deal_same_deck else 0)
+		| (2 if _deal_winnable else 0)
+		| (4 if _deal_same_layout else 0)
+		| (8 if _allow_deadend_reset else 0)
+	)
 
 
 func _receive_lobby_configuration(mode_id: int, layout_id: int, draw_mode: int, deal_options: int = -1) -> void:
@@ -551,6 +570,10 @@ func _receive_lobby_configuration(mode_id: int, layout_id: int, draw_mode: int, 
 		_deal_same_deck = (deal_options & 1) != 0
 		_deal_winnable = (deal_options & 2) != 0
 		_deal_same_layout = (deal_options & 4) != 0
+		var force_reset := mode_id == MODE_KLONDIKE and layout_id == GameSession.BOARD_LAYOUT_MIRRORED and _deal_winnable
+		_allow_deadend_reset = (deal_options & 8) != 0 or force_reset
+	GameSession.allow_deadend_reset = _allow_deadend_reset
+	GameSession.set_deadend_reset_allowed(mode_id, _allow_deadend_reset)
 	if layout_id == GameSession.BOARD_LAYOUT_CLASSIC:
 		layout_id = GameSession.BOARD_LAYOUT_MIRRORED
 	_selected_mode = mode_id
@@ -617,6 +640,29 @@ func _on_deal_option_changed() -> void:
 	_deal_same_deck = _same_deck_toggle.button_pressed
 	_deal_winnable = _winnable_toggle.button_pressed
 	_deal_same_layout = _same_layout_toggle.button_pressed
+	var force_reset := (
+		_selected_mode == MODE_KLONDIKE
+		and _selected_layout == GameSession.BOARD_LAYOUT_MIRRORED
+		and _deal_winnable
+	)
+	if force_reset:
+		_allow_deadend_reset = true
+	GameSession.allow_deadend_reset = _allow_deadend_reset
+	GameSession.set_deadend_reset_allowed(_selected_mode, _allow_deadend_reset)
+	_update_config_ui()
+	_publish_lobby_configuration()
+
+
+func _on_reset_option_changed(enabled: bool) -> void:
+	var force_reset := (
+		_selected_mode == MODE_KLONDIKE
+		and _selected_layout == GameSession.BOARD_LAYOUT_MIRRORED
+		and _deal_winnable
+	)
+	_allow_deadend_reset = true if force_reset else enabled
+	GameSession.allow_deadend_reset = _allow_deadend_reset
+	GameSession.set_deadend_reset_allowed(_selected_mode, _allow_deadend_reset)
+	_update_config_ui()
 	_publish_lobby_configuration()
 
 
@@ -1040,6 +1086,15 @@ func _start_network_game() -> void:
 	# Общий сид раздачи: оба клиента тасуют колоды одинаково,
 	# поэтому поле соперника совпадает с его настоящим полем с первой карты.
 	var deal_seed := randi_range(1, 2147483646)
+	var force_reset := (
+		_selected_mode == MODE_KLONDIKE
+		and _selected_layout == GameSession.BOARD_LAYOUT_MIRRORED
+		and _deal_winnable
+	)
+	if force_reset:
+		_allow_deadend_reset = true
+	GameSession.allow_deadend_reset = _allow_deadend_reset
+	GameSession.set_deadend_reset_allowed(_selected_mode, _allow_deadend_reset)
 
 	# Зеркальный Клондайк: хост собирает колоды полей по опциям лобби
 	# (решатель для «выигрышной» работает несколько секунд — в отдельном потоке).
@@ -1074,7 +1129,8 @@ func _start_network_game() -> void:
 		player_one_id,
 		player_two_id,
 		deal_seed,
-		{"Stock": decks.get("field_1", []), "Stock_P2": decks.get("field_2", [])} if not decks.is_empty() else {}
+		{"Stock": decks.get("field_1", []), "Stock_P2": decks.get("field_2", [])} if not decks.is_empty() else {},
+		_allow_deadend_reset
 	)
 	_set_status("Запускаем сетевую партию: %s…" % _selected_mode_name())
 	await get_tree().process_frame
@@ -1106,11 +1162,14 @@ func _apply_network_match_settings(
 	player_one_id: int,
 	player_two_id: int,
 	deal_seed: int = 0,
-	field_decks: Dictionary = {}
+	field_decks: Dictionary = {},
+	allow_deadend_reset: bool = true
 ) -> void:
 	# This function is exposed and called on both clients before the synchronized scene switch.
 	GameSession.mode = mode_id
 	GameSession.draw_mode = draw_mode
+	GameSession.allow_deadend_reset = allow_deadend_reset
+	GameSession.set_deadend_reset_allowed(mode_id, allow_deadend_reset)
 	if mode_id == MODE_SPIDER:
 		GameSession.spider_board_layout = layout_id
 	else:

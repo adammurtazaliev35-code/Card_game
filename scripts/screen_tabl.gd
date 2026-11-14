@@ -155,9 +155,15 @@ func _ready() -> void:
 	_setup_undo_buttons()
 	_connect_player_action_buttons()
 	for ui in [player_one_ui, player_two_ui]:
+		if ui.is_empty():
+			continue
 		var deadend: Dictionary = ui["deadend"]
 		(deadend["surrender"] as Button).pressed.connect(_on_deadend_surrender.bind(ui))
 		(deadend["reshuffle"] as Button).pressed.connect(_on_deadend_reshuffle.bind(ui))
+	if not ring_ui.is_empty():
+		var ring_deadend: Dictionary = ring_ui["deadend"]
+		(ring_deadend["surrender"] as Button).pressed.connect(_on_deadend_surrender.bind(ring_ui))
+		(ring_deadend["reshuffle"] as Button).pressed.connect(_on_deadend_reshuffle.bind(ring_ui))
 	call_deferred("_connect_game_manager")
 
 func _process(delta: float) -> void:
@@ -668,6 +674,10 @@ func _refresh_additional_screen_entry(slot: int, ui: Dictionary) -> void:
 	var verdict := int(verdict_info.get("verdict", -1))
 	if game_manager.game_finished:
 		status.text = "ПАРТИЯ ЗАВЕРШЕНА"
+	elif verdict == KlondikePredictor.Verdict.DEAD_END:
+		status.text = "ТУПИК"
+	elif verdict == KlondikePredictor.Verdict.WON:
+		status.text = "ПОЛЕ СОБРАНО"
 	elif game_manager.rules is SpiderRules:
 		status.text = "ПАУК · ИГРА ИДЁТ"
 	else:
@@ -676,10 +686,6 @@ func _refresh_additional_screen_entry(slot: int, ui: Dictionary) -> void:
 				status.text = "ХОД ВОЗМОЖЕН"
 			KlondikePredictor.Verdict.STUCK_RECOVERABLE:
 				status.text = "НУЖНА ОТМЕНА"
-			KlondikePredictor.Verdict.DEAD_END:
-				status.text = "ТУПИК"
-			KlondikePredictor.Verdict.WON:
-				status.text = "ПОЛЕ СОБРАНО"
 			_:
 				status.text = "АНАЛИЗИРУЕМ…"
 
@@ -687,9 +693,10 @@ func _refresh_additional_screen_entry(slot: int, ui: Dictionary) -> void:
 	var normal_cost := game_manager.get_normal_reset_cost(field_id)
 	var remaining := maxi(0, normal_cost - field_moves)
 	var deadend_undo := game_manager.get_deadend_reset_undo_count(field_id)
-	(ui["normal_left"] as Label).text = str(remaining) if game_manager.rules is KlondikeRules else "—"
-	(ui["normal_undo"] as Label).text = str(normal_cost) if game_manager.rules is KlondikeRules else "—"
-	(ui["deadend_undo"] as Label).text = str(deadend_undo) if game_manager.rules is KlondikeRules else "—"
+	var supports_reset := game_manager.rules is KlondikeRules or game_manager.rules is SpiderRules
+	(ui["normal_left"] as Label).text = str(remaining) if supports_reset and GameSession.allow_deadend_reset else "ВЫКЛ"
+	(ui["normal_undo"] as Label).text = str(normal_cost) if supports_reset and GameSession.allow_deadend_reset else "—"
+	(ui["deadend_undo"] as Label).text = str(deadend_undo) if supports_reset and GameSession.allow_deadend_reset else "—"
 	(ui["hints_remaining"] as Label).text = str(game_manager.hint_charges)
 	var stats := game_manager.get_field_stats(field_id)
 	(ui["footer"] as Label).text = "ХОДЫ %d  ·  ОТМЕНЫ ИСП. %d  ·  ОТМЕН ОСТАЛОСЬ %d  ·  ПОДСКАЗОК ИСП. %d" % [
@@ -733,10 +740,10 @@ func _connect_player_action_buttons() -> void:
 
 
 func _player_slot(ui: Dictionary) -> int:
-	# В Ring интерфейс один на локального игрока, поэтому не привязываем
-	# его кнопки к P1 при подключении игрока со слотом 2.
-	if display_mode == DisplayMode.RING and network_session_active:
-		return local_player_slot
+	# В Ring интерфейс один: одиночная игра всегда управляет полем 1,
+	# а в сети — полем локального слота.
+	if display_mode == DisplayMode.RING:
+		return local_player_slot if network_session_active else 1
 	return 2 if ui.get("panel") == player_two_ui.get("panel") else 1
 
 
@@ -758,7 +765,9 @@ func _on_player_undo(ui: Dictionary) -> void:
 
 
 func _on_player_reset(ui: Dictionary) -> void:
-	if game_manager == null or not game_manager.rules is KlondikeRules:
+	if game_manager == null or not GameSession.allow_deadend_reset:
+		return
+	if not (game_manager.rules is KlondikeRules or game_manager.rules is SpiderRules):
 		return
 	var field_id := _player_field_id(ui)
 	if field_id.is_empty():
@@ -801,7 +810,8 @@ func _update_player_action_set(ui: Dictionary, actions: Dictionary) -> void:
 	var normal_cost := game_manager.get_normal_reset_cost(field_id) if local_field else 10
 	var info: Dictionary = game_manager.field_verdicts.get(field_id, {}) if local_field else {}
 	var is_dead_end := int(info.get("verdict", -1)) == KlondikePredictor.Verdict.DEAD_END
-	var can_reset := game_manager.rules is KlondikeRules and local_field and (is_dead_end or history_count >= normal_cost)
+	var supports_reset := game_manager.rules is KlondikeRules or game_manager.rules is SpiderRules
+	var can_reset := supports_reset and GameSession.allow_deadend_reset and local_field and (is_dead_end or history_count >= normal_cost)
 	reset.disabled = busy or not can_reset
 	reset.text = "ТУПИК" if is_dead_end else "СБРОС %d" % normal_cost
 
@@ -1072,9 +1082,10 @@ func _create_player_panel(parent: HBoxContainer, player_title: String) -> Dictio
 ## Окончательный тупик: затемнение поля игрока, предупреждение и выбор
 ## «Сдаться» / «Перетасовать». Кнопки нажимаются прямо на экране табло
 ## (клик по 3D-экрану пересылается в этот SubViewport — см. _forward_screen_click).
-func _create_deadend_overlay(panel: PanelContainer) -> Dictionary:
+func _create_deadend_overlay(panel: Control) -> Dictionary:
 	var overlay := Control.new()
 	overlay.name = "DeadEndOverlay"
+	overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	overlay.visible = false
 	panel.add_child(overlay)
@@ -1132,17 +1143,19 @@ func _make_screen_button(text_value: String, base: Color) -> Button:
 ## Вердикт предсказателя по полю: показать/спрятать предупреждение о тупике.
 
 func _on_field_verdict_changed(field_id: String, verdict: int, _info: Dictionary) -> void:
-	var ui := _ui_for_field(field_id)
+	var ui: Dictionary = ring_ui if display_mode == DisplayMode.RING else _ui_for_field(field_id)
 	if not ui.is_empty():
 		var deadend: Dictionary = ui["deadend"]
 		deadend["field"] = field_id
 		var show_deadend := (
 			verdict == KlondikePredictor.Verdict.DEAD_END
+			and GameSession.allow_deadend_reset
 			and _is_local_field(field_id)
-			and display_mode != DisplayMode.RING
+			and game_manager != null
+			and not game_manager.game_finished
 		)
 		(deadend["root"] as Control).visible = show_deadend
-		(deadend["root"] as Control).mouse_filter = Control.MOUSE_FILTER_IGNORE
+		(deadend["root"] as Control).mouse_filter = Control.MOUSE_FILTER_STOP if show_deadend else Control.MOUSE_FILTER_IGNORE
 	_refresh_additional_screens()
 	_refresh_player_actions()
 func _ui_for_field(field_id: String) -> Dictionary:
@@ -1167,16 +1180,19 @@ func _on_deadend_surrender(ui: Dictionary) -> void:
 	var deadend: Dictionary = ui["deadend"]
 	(deadend["root"] as Control).visible = false
 	if game_manager != null and not str(deadend["field"]).is_empty():
-		game_manager.surrender(str(deadend["field"]))
+		game_manager.finish_dead_end(str(deadend["field"]))
 
 
 
 func _on_deadend_reshuffle(ui: Dictionary) -> void:
 	var deadend: Dictionary = ui["deadend"]
-	(deadend["root"] as Control).visible = false
-	if game_manager != null and not str(deadend["field"]).is_empty():
-		game_manager.deadend_reset_field(str(deadend["field"]))
+	if game_manager == null or str(deadend["field"]).is_empty():
+		return
+	var reset_succeeded := game_manager.deadend_reset_field(str(deadend["field"]))
+	(deadend["root"] as Control).visible = not reset_succeeded
+	if reset_succeeded:
 		_refresh_additional_screens()
+		_refresh_player_actions()
 
 # ==================================================
 # 3D SCREEN INPUT
@@ -1746,8 +1762,10 @@ func _create_ring_ui(parent: Control) -> Dictionary:
 			"count": count_label
 		})
 
+	var ring_deadend := _create_deadend_overlay(ring_root)
 	return {
 		"root": ring_root,
+		"deadend": ring_deadend,
 		"header": header,
 		"actions": {"hint": ring_hint_action, "undo": ring_undo_action, "reset": ring_reset_action},
 		"score": score,
