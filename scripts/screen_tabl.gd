@@ -265,7 +265,7 @@ func _apply_additional_screen_visibility(network_dual_screen: bool) -> void:
 		var viewport := entry.get("viewport") as SubViewport
 		if is_instance_valid(viewport):
 			viewport.render_target_update_mode = (
-				SubViewport.UPDATE_ALWAYS
+				SubViewport.UPDATE_ONCE
 				if show_screen
 				else SubViewport.UPDATE_DISABLED
 			)
@@ -452,7 +452,9 @@ func _setup_additional_viewports() -> void:
 		viewport.name = "AdditionalScreenViewport_P%d" % slot
 		viewport.size = safe_resolution
 		viewport.transparent_bg = false
-		viewport.render_target_update_mode = SubViewport.UPDATE_ALWAYS
+		# Экран статичен между игровыми событиями: рендерим один кадр,
+		# а не перерисовываем весь интерфейс непрерывно.
+		viewport.render_target_update_mode = SubViewport.UPDATE_ONCE
 		add_child(viewport)
 
 		var ui := _build_additional_screen_ui(viewport, slot)
@@ -683,6 +685,22 @@ func _refresh_additional_screens() -> void:
 		var slot := int(entry.get("slot", 1))
 		var ui: Dictionary = entry.get("ui", {})
 		_refresh_additional_screen_entry(slot, ui)
+	_request_screen_viewport_update()
+
+
+## Перерисовывает текстуры табло только после изменения UI.
+## SubViewport в режиме UPDATE_ONCE сам отключается после одного кадра.
+func _request_screen_viewport_update() -> void:
+	if is_instance_valid(screen_viewport):
+		screen_viewport.render_target_update_mode = SubViewport.UPDATE_ONCE
+
+	for entry in additional_screen_entries:
+		var viewport := entry.get("viewport") as SubViewport
+		if not is_instance_valid(viewport):
+			continue
+		var model := entry.get("model") as MeshInstance3D
+		if is_instance_valid(model) and model.visible:
+			viewport.render_target_update_mode = SubViewport.UPDATE_ONCE
 
 
 func _refresh_additional_screen_entry(slot: int, ui: Dictionary) -> void:
@@ -951,7 +969,9 @@ func _setup_viewport() -> void:
 	screen_viewport.name = "ScreensViewport"
 	screen_viewport.size = viewport_resolution
 	screen_viewport.transparent_bg = false
-	screen_viewport.render_target_update_mode = SubViewport.UPDATE_ALWAYS
+	# Основное табло меняется только по событиям игры и раз в секунду по таймеру.
+	# UPDATE_ONCE снимает постоянную нагрузку от отдельного SubViewport.
+	screen_viewport.render_target_update_mode = SubViewport.UPDATE_ONCE
 	add_child(screen_viewport)
 
 	var root := Control.new()
@@ -3038,6 +3058,8 @@ func _update_time_label() -> void:
 	if not ring_ui.is_empty():
 		ring_ui["time"].text = "ВРЕМЯ %02d:%02d" % [minutes, seconds]
 		ring_ui["score"].text = "%02d" % current_score_p1
+
+	_request_screen_viewport_update()
 
 
 # ==================================================
