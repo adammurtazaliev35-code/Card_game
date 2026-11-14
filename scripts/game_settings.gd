@@ -104,6 +104,9 @@ const PALETTES := {
 static var music_volume := 0.7
 static var sfx_volume := 0.8
 static var mouse_look := true
+## Дублирующие кнопки подсказки/сброса поверх игрового изображения.
+## На телефонах включены по умолчанию, на ПК — выключены.
+static var show_camera_action_buttons := OS.has_feature("mobile")
 static var music_track := ""
 static var palette_id := "classic"
 static var display_mode := DISPLAY_MODE_WINDOWED
@@ -130,6 +133,7 @@ static func ensure_loaded() -> void:
 		music_volume = clampf(float(cfg.get_value("audio", "music", music_volume)), 0.0, 1.0)
 		sfx_volume = clampf(float(cfg.get_value("audio", "sfx", sfx_volume)), 0.0, 1.0)
 		mouse_look = bool(cfg.get_value("camera", "mouse_look", mouse_look))
+		show_camera_action_buttons = bool(cfg.get_value("game_ui", "camera_action_buttons", show_camera_action_buttons))
 		music_track = str(cfg.get_value("audio", "track", music_track))
 		palette_id = str(cfg.get_value("visual", "palette", palette_id))
 		voice_volume = clampf(float(cfg.get_value("voice", "volume", voice_volume)), 0.0, 1.0)
@@ -158,6 +162,7 @@ static func save() -> void:
 	cfg.set_value("audio", "music", music_volume)
 	cfg.set_value("audio", "sfx", sfx_volume)
 	cfg.set_value("camera", "mouse_look", mouse_look)
+	cfg.set_value("game_ui", "camera_action_buttons", show_camera_action_buttons)
 	cfg.set_value("audio", "track", music_track)
 	cfg.set_value("visual", "palette", palette_id)
 	cfg.set_value("display", "mode", display_mode)
