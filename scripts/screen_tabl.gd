@@ -156,6 +156,7 @@ func _ready() -> void:
 	_setup_screen_material()
 	_setup_additional_screen_material()
 	_setup_screen_touch()
+	_setup_additional_screen_touch()
 	_setup_undo_buttons()
 	_connect_player_action_buttons()
 	_setup_camera_action_hud()
