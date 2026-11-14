@@ -98,12 +98,23 @@ func _build_tabs() -> void:
 	voice_page.add_child(voice_description)
 	_voice_volume = _add_slider(
 		voice_page, "Громкость собеседника", GameSettings.voice_volume,
-		_on_voice_volume_changed, Callable()
+		_on_voice_volume_changed, _on_voice_settings_released
 	)
+	_voice_volume.focus_exited.connect(_on_voice_settings_released)
 	_voice_sensitivity = _add_slider(
 		voice_page, "Чувствительность микрофона", GameSettings.voice_input_threshold,
-		_on_voice_sensitivity_changed, Callable(), 0.001, 0.1, 0.001
+		_on_voice_sensitivity_changed, _on_voice_settings_released,
+		0.001, 0.1, 0.001
 	)
+	_voice_sensitivity.focus_exited.connect(_on_voice_settings_released)
+
+	var sensitivity_hint := _label(
+		"Чем ниже порог, тем чувствительнее микрофон: он будет улавливать более тихие звуки.",
+		14,
+		GameSettings.get_color("muted")
+	)
+	sensitivity_hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	voice_page.add_child(sensitivity_hint)
 	_add_voice_quality_selector(voice_page)
 	if GameSettings.is_voice_key_binding_supported():
 		_voice_key_button = _button(_voice_key_text(), _on_voice_key_capture_pressed)
@@ -289,14 +300,13 @@ func _on_sfx_released() -> void:
 
 func _on_voice_volume_changed(value: float) -> void:
 	GameSettings.voice_volume = clampf(value, 0.0, 1.0)
-	GameSettings.save()
-
 
 func _on_voice_sensitivity_changed(value: float) -> void:
 	GameSettings.voice_input_threshold = clampf(value, 0.001, 0.1)
+
+func _on_voice_settings_released() -> void:
 	GameSettings.save()
-
-
+	
 func _add_voice_quality_selector(parent: VBoxContainer) -> void:
 	var row := HBoxContainer.new()
 	row.add_theme_constant_override("separation", 14)
@@ -345,6 +355,7 @@ func _unhandled_key_input(event: InputEvent) -> void:
 		return
 	var keycode := int(key_event.physical_keycode if key_event.physical_keycode != 0 else key_event.keycode)
 	GameSettings.set_voice_ptt_key(keycode)
+	GameSettings.save()
 	_capturing_voice_key = false
 	if _voice_key_button != null:
 		_voice_key_button.text = _voice_key_text()

@@ -11,8 +11,8 @@ const SHADER_WASTE := 6.0
 const SHADER_STOCK := 7.0
 
 @export var layout: Layout = Layout.STACK
-@export var stack_step := Vector3(0, 0.0003, 0)
-@export var cascade_step := Vector3(0, 0.0003, 0.015)
+@export var stack_step := Vector3(0, 0.00025, 0)
+@export var cascade_step := Vector3(0, 0.00025, 0.015)
 ## Во сколько раз закрытые карты каскада лежат плотнее открытых (1 = одинаково)
 @export_range(0.1, 1.0, 0.05) var facedown_ratio := 1.0
 ## Максимальная длина каскада по Z в метрах. Если карты не влезают, шаг сжимается. 0 = без лимита.

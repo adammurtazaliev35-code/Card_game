@@ -15,7 +15,7 @@ class_name NetworkBoardFeedback
 
 enum CardPlane { XZ, XY }
 enum PointerState { MOVE, HOVER, DRAG, RELEASE }
-
+var _remote_speaking := false
 @export_group("Указатель")
 @export var camera_path: NodePath
 @export_flags_3d_physics var pointer_collision_mask: int = 0xFFFFFFFF
@@ -109,7 +109,9 @@ func _notification(what: int) -> void:
 		NOTIFICATION_WM_MOUSE_ENTER, NOTIFICATION_APPLICATION_FOCUS_IN:
 			_mouse_inside = true
 
-
+func set_remote_speaking(value: bool) -> void:
+	_remote_speaking = value
+	
 func _process(delta: float) -> void:
 	if not _is_network_match():
 		_hide_remote()
@@ -472,7 +474,14 @@ func _update_remote_visuals(delta: float) -> void:
 	scale_goal += _release_flash * 0.8
 	_remote_cursor.scale = _remote_cursor.scale.lerp(Vector3.ONE * scale_goal, t)
 	_remote_label.text = "%s · %s" % [NetworkMatchState.name_of(_remote_slot), _state_caption()]
+	var voice_pulse := 0.0
 
+	if _remote_speaking:
+		voice_pulse = 0.5 + 0.5 * sin(_now() * TAU * 2.0)
+		scale_goal *= 1.0 + voice_pulse * 0.12
+		_remote_cursor_material.emission_energy_multiplier = lerpf(1.2, 2.0, voice_pulse)
+	else:
+		_remote_cursor_material.emission_energy_multiplier = 1.2
 	# Карты, которые соперник тащит, плавно следуют за его рукой.
 	if not _remote_drag_cards.is_empty():
 		var lead := _remote_drag_cards[0]

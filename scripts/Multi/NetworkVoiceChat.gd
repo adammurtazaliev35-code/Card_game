@@ -1,22 +1,27 @@
+
 extends Node
 class_name NetworkVoiceChat
-## GD-Sync VoiceChat wiring for the two player slots.
-## Every peer creates the same two VoiceChat nodes and assigns network ownership
-## to the matching lobby client. The local slot alone may open its microphone.
+## Настройка GD-Sync VoiceChat для двух игроков.
+## В сцене должны присутствовать VoiceChat_P1 и VoiceChat_P2,
+## каждому заранее назначается собственный AudioStreamPlayer.
 
 const PTT_ACTION := GameSettings.VOICE_PTT_ACTION
 
 var _voice_nodes: Array[Node] = []
-var _output_players: Array[AudioStreamPlayer] = []
 var _local_voice: Node
+var _remote_output: AudioStreamPlayer
+var _local_slot := 0
 var _talking := false
 var _mobile_layer: CanvasLayer
+
 var _last_volume := -1.0
 var _last_threshold := -1.0
 var _last_quality := -1
 
 
 func _ready() -> void:
+	if GDSync.is_active():
+		GDSync.expose_func(_receive_voice_state)
 	process_mode = Node.PROCESS_MODE_ALWAYS
 	set_process(true)
 	call_deferred("_setup_voice_nodes")
@@ -24,68 +29,83 @@ func _ready() -> void:
 
 func _setup_voice_nodes() -> void:
 	GameSettings.ensure_loaded()
+
+	var voice_p1: Node
+	var voice_p2: Node
+
 	var found: Array[Node] = []
 	_collect_voice_nodes(get_tree().current_scene, found)
-	if found.is_empty():
-		push_warning("NetworkVoiceChat: в сцене не найдена GD-Sync VoiceChat-нода.")
+
+	for voice in found:
+		match str(voice.name):
+			"VoiceChat_P1":
+				voice_p1 = voice
+			"VoiceChat_P2":
+				voice_p2 = voice
+
+	if voice_p1 == null or voice_p2 == null:
+		push_error(
+			"NetworkVoiceChat: нужны две ноды VoiceChat_P1 и VoiceChat_P2. "
+			+ "Проверь структуру сцены."
+		)
 		return
 
-	var first: Node = found[0]
-	if found.size() == 1:
-		first.name = "VoiceChat_P1"
-		var second := first.duplicate() as Node
-		if second == null:
-			# VoiceChat is a GDScript class_name, not necessarily a ClassDB native class.
-			var voice_script := first.get_script() as Script
-			if voice_script != null:
-				second = Node.new()
-				second.set_script(voice_script)
-		if second == null:
-			push_warning("NetworkVoiceChat: не удалось создать вторую VoiceChat-ноду. Добавь VoiceChat_P2 вручную.")
+	_voice_nodes = [voice_p1, voice_p2]
+
+	var outputs: Array[AudioStreamPlayer] = []
+
+	for voice in _voice_nodes:
+		var output := voice.get("_output_player") as AudioStreamPlayer
+
+		if output == null or not is_instance_valid(output):
+			push_error(
+				"NetworkVoiceChat: у %s не назначен Output Player."
+				% voice.name
+			)
+			_voice_nodes.clear()
 			return
-		second.name = "VoiceChat_P2"
-		first.get_parent().add_child(second)
-		_voice_nodes = [first, second]
-	else:
-		_voice_nodes = [found[0], found[1]]
-		_voice_nodes[0].name = "VoiceChat_P1"
-		_voice_nodes[1].name = "VoiceChat_P2"
+
+		outputs.append(output)
+		voice.set("spatial_mode", 0)
+
+	var local_id := int(GDSync.get_client_id())
+	var local_slot := NetworkMatchState.slot_of(local_id)
+
+	if local_slot not in [1, 2]:
+		push_error("NetworkVoiceChat: не удалось определить локального игрока.")
+		_voice_nodes.clear()
+		return
+	_local_slot = local_slot
+	var player_ids: Array[int] = []
 
 	for slot in [1, 2]:
-		var voice: Node = _voice_nodes[slot - 1]
-		var peer_id := NetworkMatchState.id_of(slot)
+		var peer_id := int(NetworkMatchState.id_of(slot))
 		if peer_id < 0:
-			push_warning("NetworkVoiceChat: не найден сетевой ID игрока %d." % slot)
-			continue
-		var output := AudioStreamPlayer.new()
-		output.name = "VoiceOutput_P%d" % slot
-		add_child(output)
-		_output_players.append(output)
-		if not _has_property(voice, "_output_player"):
-			push_warning("NetworkVoiceChat: у VoiceChat отсутствует свойство _output_player.")
-			continue
-		voice.set("_output_player", output)
-		voice.set("spatial_mode", 0)
-		GDSync.set_gdsync_owner(voice, peer_id)
-		_configure_input_device(voice)
+			push_error(
+				"NetworkVoiceChat: не найден сетевой ID игрока %d." % slot
+			)
+			_voice_nodes.clear()
+			return
+		player_ids.append(peer_id)
 
-		# VoiceChat._ready() disables processing when Output Player was None.
-		# The scene node is already inside the tree here, so complete the
-		# plugin's own setup explicitly after assigning the output player.
-		if peer_id == int(GDSync.get_client_id()):
-			voice.call("_configure_input")
-		else:
-			voice.call("_configure_output")
-		voice.set_process(true)
-		if voice.has_method("mute_microphone"):
-			voice.call("mute_microphone")
+	# Каждый VoiceChat принадлежит своему игроку.
+	# GD-Sync сам обработает смену владельца и настройку записи/воспроизведения.
+	for index in range(2):
+		GDSync.set_gdsync_owner(_voice_nodes[index], player_ids[index])
 
-	var local_slot := NetworkMatchState.slot_of(int(GDSync.get_client_id()))
-	if local_slot not in [1, 2]:
-		push_warning("NetworkVoiceChat: не удалось определить локального игрока.")
-		return
 	_local_voice = _voice_nodes[local_slot - 1]
+
+	var remote_slot := 2 if local_slot == 1 else 1
+	_remote_output = outputs[remote_slot - 1]
+
+	_configure_input_device(_local_voice)
+
+	if _local_voice.has_method("mute_microphone"):
+		_local_voice.call("mute_microphone")
+
 	_apply_voice_settings()
+	_update_settings_cache()
+
 	if OS.has_feature("mobile"):
 		_create_mobile_ptt_button()
 
@@ -93,52 +113,78 @@ func _setup_voice_nodes() -> void:
 func _collect_voice_nodes(node: Node, output: Array[Node]) -> void:
 	if node == null:
 		return
-	if node.has_method("get_input_devices") and node.has_method("set_input_device") \
-			and node.has_method("mute_microphone") and node.has_method("unmute_microphone"):
+
+	if node.has_method("get_input_devices") \
+			and node.has_method("set_input_device") \
+			and node.has_method("mute_microphone") \
+			and node.has_method("unmute_microphone"):
 		output.append(node)
+
 	for child in node.get_children():
 		_collect_voice_nodes(child, output)
 
 
-func _has_property(object: Object, property_name: String) -> bool:
-	for item in object.get_property_list():
-		if str(item.get("name", "")) == property_name:
-			return true
-	return false
-
-
 func _configure_input_device(voice: Node) -> void:
 	var devices: PackedStringArray = voice.call("get_input_devices")
+
 	if devices.is_empty():
-		push_warning("NetworkVoiceChat: GD-Sync не обнаружил устройство записи.")
+		push_warning(
+			"NetworkVoiceChat: GD-Sync не обнаружил устройство записи."
+		)
 		return
+
 	var selected := AudioServer.input_device
-	if not devices.has(selected):
+
+	if selected.is_empty() or not devices.has(selected):
 		selected = str(devices[0])
+
 	voice.call("set_input_device", selected)
 
 
 func _apply_voice_settings() -> void:
 	GameSettings.ensure_loaded()
-	for voice in _voice_nodes:
-		voice.set("audio_quality", GameSettings.voice_quality)
-		voice.set("input_volume_threshold", GameSettings.voice_input_threshold)
-	for output in _output_players:
-		output.volume_linear = GameSettings.voice_volume
+
+	# Качество передачи и порог чувствительности относятся
+	# к микрофону локального игрока.
+	if is_instance_valid(_local_voice):
+		_local_voice.set(
+			"audio_quality",
+			clampi(GameSettings.voice_quality, 0, 3)
+		)
+		_local_voice.set(
+			"input_volume_threshold",
+			clampf(GameSettings.voice_input_threshold, 0.001, 0.1)
+		)
+
+	# Громкость регулирует только голос соперника.
+	if is_instance_valid(_remote_output):
+		_remote_output.volume_linear = clampf(
+			GameSettings.voice_volume, 0.0, 1.0
+		)
+
+
+func _update_settings_cache() -> void:
+	_last_volume = GameSettings.voice_volume
+	_last_threshold = GameSettings.voice_input_threshold
+	_last_quality = GameSettings.voice_quality
 
 
 func _process(_delta: float) -> void:
-	if _voice_nodes.is_empty():
+	if not is_instance_valid(_local_voice):
 		return
+
 	if GameSettings.voice_volume != _last_volume \
 			or GameSettings.voice_input_threshold != _last_threshold \
 			or GameSettings.voice_quality != _last_quality:
 		_apply_voice_settings()
-		_last_volume = GameSettings.voice_volume
-		_last_threshold = GameSettings.voice_input_threshold
-		_last_quality = GameSettings.voice_quality
+		_update_settings_cache()
+
 	if not OS.has_feature("mobile"):
-		_set_talking(InputMap.has_action(PTT_ACTION) and Input.is_action_pressed(PTT_ACTION))
+		var pressed := (
+			InputMap.has_action(PTT_ACTION)
+			and Input.is_action_pressed(PTT_ACTION)
+		)
+		_set_talking(pressed)
 
 
 func _create_mobile_ptt_button() -> void:
@@ -146,6 +192,7 @@ func _create_mobile_ptt_button() -> void:
 	_mobile_layer.name = "VoicePushToTalk"
 	_mobile_layer.layer = 70
 	add_child(_mobile_layer)
+
 	var root := Control.new()
 	root.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	root.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -162,16 +209,29 @@ func _create_mobile_ptt_button() -> void:
 	button.offset_top = -104.0
 	button.offset_right = -24.0
 	button.offset_bottom = -28.0
+	button.focus_mode = Control.FOCUS_NONE
+
 	button.add_theme_font_size_override("font_size", 18)
 	button.add_theme_color_override("font_color", Color("#f3e6c8"))
-	button.add_theme_stylebox_override("normal", _button_style(
-		GameSettings.get_color("button"), GameSettings.get_color("gold")
-	))
-	button.add_theme_stylebox_override("pressed", _button_style(
-		GameSettings.get_color("accent"), GameSettings.get_color("gold")
-	))
+
+	button.add_theme_stylebox_override(
+		"normal",
+		_button_style(
+			GameSettings.get_color("button"),
+			GameSettings.get_color("gold")
+		)
+	)
+	button.add_theme_stylebox_override(
+		"pressed",
+		_button_style(
+			GameSettings.get_color("accent"),
+			GameSettings.get_color("gold")
+		)
+	)
+
 	button.button_down.connect(_set_talking.bind(true))
 	button.button_up.connect(_set_talking.bind(false))
+
 	root.add_child(button)
 
 
@@ -189,14 +249,44 @@ func _button_style(background: Color, border_color: Color) -> StyleBoxFlat:
 
 
 func _set_talking(value: bool) -> void:
-	if _talking == value or _local_voice == null or not is_instance_valid(_local_voice):
+	if _talking == value:
 		return
+
+	if not is_instance_valid(_local_voice):
+		return
+
 	_talking = value
+	_update_voice_indicator(_local_slot, value)
+	
+	if _local_slot in [1, 2] and GDSync.is_active():
+		GDSync.call_func(_receive_voice_state, _local_slot, value)
 	if value:
 		_local_voice.call("unmute_microphone")
 	else:
 		_local_voice.call("mute_microphone")
 
+
+func _receive_voice_state(sender_slot: int, speaking: bool) -> void:
+	if not GDSync.is_active() or not NetworkMatchState.active:
+		return
+	if sender_slot not in [1, 2] or sender_slot == _local_slot:
+		return
+
+	# Проверяем, что сообщение действительно пришло от указанного игрока.
+	if NetworkMatchState.slot_of(int(GDSync.get_sender_id())) != sender_slot:
+		return
+
+	_update_voice_indicator(sender_slot, speaking)
+
+
+func _update_voice_indicator(slot: int, speaking: bool) -> void:
+	var signs := get_tree().get_first_node_in_group("network_match_signs")
+	if signs != null and signs.has_method("set_voice_activity"):
+		signs.call("set_voice_activity", slot, speaking)
+
+	var feedback := get_tree().get_first_node_in_group("network_board_feedback")
+	if feedback != null and slot != _local_slot:
+		feedback.set_remote_speaking(speaking)
 
 func _notification(what: int) -> void:
 	if what == NOTIFICATION_APPLICATION_FOCUS_OUT:
