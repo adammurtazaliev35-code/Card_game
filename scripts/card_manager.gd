@@ -76,12 +76,14 @@ func _show_hint(entries: Array) -> void:
 	if not is_instance_valid(source):
 		return
 
-	# В predictor тип действия draw/recycle лежит внутри вложенного словаря move.
-	# Для таких действий цель и источник определяем по типу действия.
+	# Разные источники подсказок сериализуют действие по-разному:
+	# Spider кладёт draw/recycle прямо в запись, predictor может вложить в move.
+	var is_draw := first.has("draw") or move.has("draw")
+	var is_recycle := first.has("recycle") or move.has("recycle")
 	var card_source := source
-	if move.has("draw"):
+	if is_draw:
 		target = _find_field_pile(source, PileMarker.Kind.WASTE)
-	elif move.has("recycle"):
+	elif is_recycle:
 		card_source = _find_field_pile(source, PileMarker.Kind.WASTE)
 		target = source
 
