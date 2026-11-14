@@ -203,6 +203,10 @@ func _update_layout_selector() -> void:
 	)
 	
 func _on_play() -> void:
+	# Main-menu Play is always a local game, never a continuation of a stale lobby.
+	NetworkMatchState.clear()
+	GameSession.is_multiplayer = false
+
 	var mode := GameSession.mode if GameSession.mode != 0 else MODE_KLONDIKE
 	var path: String = str(GameSession.LEVEL_SCENES.get(mode, ""))
 	if path.is_empty() or not ResourceLoader.exists(path):
