@@ -500,10 +500,10 @@ func _build_additional_screen_ui(viewport: SubViewport, slot: int) -> Dictionary
 	buttons.add_theme_constant_override("h_separation", _si(12))
 	buttons.add_theme_constant_override("v_separation", _si(8))
 	column.add_child(buttons)
-	var normal_reset := _make_screen_button("ОБЫЧНЫЙ СБРОС", Color("#245A4A"))
-	var deadend_reset := _make_screen_button("ТУПИКОВЫЙ СБРОС · 2", Color("#6E4B22"))
-	var hint_button := _make_screen_button("ПОДСКАЗКА", Color("#44366D"))
-	var surrender := _make_screen_button("СДАТЬСЯ", Color("#6E2A22"))
+	var normal_reset := _make_additional_screen_button("ОБЫЧНЫЙ СБРОС", Color("#245A4A"))
+	var deadend_reset := _make_additional_screen_button("ТУПИКОВЫЙ СБРОС · 2", Color("#6E4B22"))
+	var hint_button := _make_additional_screen_button("ПОДСКАЗКА", Color("#44366D"))
+	var surrender := _make_additional_screen_button("СДАТЬСЯ", Color("#6E2A22"))
 	buttons.add_child(normal_reset)
 	buttons.add_child(deadend_reset)
 	buttons.add_child(hint_button)
@@ -1061,6 +1061,14 @@ func _create_deadend_overlay(panel: PanelContainer) -> Dictionary:
 	buttons.add_child(surrender)
 	buttons.add_child(reshuffle)
 	return {"root": overlay, "title": title, "hint": hint, "surrender": surrender, "reshuffle": reshuffle, "field": ""}
+
+
+func _make_additional_screen_button(text_value: String, base: Color) -> Button:
+	var button := _make_screen_button(text_value, base)
+	# После поворота viewport высота кнопки становится шириной на портретном дисплее.
+	button.custom_minimum_size = Vector2(_s(170), _s(62))
+	button.add_theme_font_size_override("font_size", _si(18))
+	return button
 
 
 func _make_screen_button(text_value: String, base: Color) -> Button:
