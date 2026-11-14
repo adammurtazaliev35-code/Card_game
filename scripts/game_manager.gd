@@ -736,9 +736,16 @@ func _redeal_field(field_id: String, undo_steps: int, count_normal_reset: bool) 
 	tableau.sort_custom(func(a: Pile, b: Pile) -> bool:
 		return KlondikePredictor._marker_number(a) < KlondikePredictor._marker_number(b))
 
+	# Проверяем владение всем полем даже при нулевом откате (ранний тупик).
+	# Иначе клиент мог бы перетасовать чужое поле, когда записей истории нет.
+	var sync := NetworkMatchSync.find_in(get_tree())
+	if sync != null:
+		for affected_pile in [stock, waste] + tableau:
+			if affected_pile is Pile and not sync.can_local_interact(affected_pile):
+				return false
+
 	# Предварительно проверяем все целевые записи: сетевой отказ не должен
 	# отменить часть ходов и оставить поле в промежуточном состоянии.
-	var sync := NetworkMatchSync.find_in(get_tree())
 	if sync != null:
 		for history_index in selected_indices:
 			var record: MoveRecord = history[history_index]
