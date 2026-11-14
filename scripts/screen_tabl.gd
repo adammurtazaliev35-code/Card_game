@@ -732,8 +732,6 @@ func _setup_player_controls() -> void:
 	panel.offset_right = -16.0 * hud_scale
 	panel.offset_bottom = -16.0 * hud_scale
 	panel.custom_minimum_size = Vector2(460, 144) * hud_scale
-	panel.scale = Vector2.ONE * hud_scale
-	panel.pivot_offset = Vector2(460, 144)
 	var panel_style := StyleBoxFlat.new()
 	panel_style.bg_color = Color(0.04, 0.07, 0.11, 0.92)
 	panel_style.border_color = Color("#52657D")
@@ -744,13 +742,13 @@ func _setup_player_controls() -> void:
 
 	var margin := MarginContainer.new()
 	for side in ["left", "right", "top", "bottom"]:
-		margin.add_theme_constant_override("margin_" + side, 8)
+		margin.add_theme_constant_override("margin_" + side, roundi(8.0 * hud_scale))
 	panel.add_child(margin)
 
 	var grid := GridContainer.new()
 	grid.columns = 2
-	grid.add_theme_constant_override("h_separation", 8)
-	grid.add_theme_constant_override("v_separation", 8)
+	grid.add_theme_constant_override("h_separation", roundi(8.0 * hud_scale))
+	grid.add_theme_constant_override("v_separation", roundi(8.0 * hud_scale))
 	margin.add_child(grid)
 
 	_player_hint_button = _make_screen_button("ПОДСКАЗКА", Color("#44366D"))
