@@ -719,7 +719,9 @@ func _setup_player_controls() -> void:
 	_player_hud_layer.add_child(_player_hud_root)
 
 	var viewport_size := get_viewport().get_visible_rect().size
-	var hud_scale := minf(1.0, minf(viewport_size.x / 500.0, viewport_size.y / 190.0))
+	var hud_scale := 1.0
+	if viewport_size.x > 0.0 and viewport_size.y > 0.0:
+		hud_scale = minf(1.0, minf(viewport_size.x / 500.0, viewport_size.y / 190.0))
 	var panel := PanelContainer.new()
 	panel.name = "PlayerControlsPanel"
 	panel.anchor_left = 1.0
