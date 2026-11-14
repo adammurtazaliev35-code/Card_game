@@ -719,17 +719,21 @@ func _setup_player_controls() -> void:
 	_player_hud_root.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_player_hud_layer.add_child(_player_hud_root)
 
+	var viewport_size := get_viewport().get_visible_rect().size
+	var hud_scale := minf(1.0, minf(viewport_size.x / 500.0, viewport_size.y / 190.0))
 	var panel := PanelContainer.new()
 	panel.name = "PlayerControlsPanel"
 	panel.anchor_left = 1.0
 	panel.anchor_top = 1.0
 	panel.anchor_right = 1.0
 	panel.anchor_bottom = 1.0
-	panel.offset_left = -476.0
-	panel.offset_top = -160.0
-	panel.offset_right = -16.0
-	panel.offset_bottom = -16.0
-	panel.custom_minimum_size = Vector2(460, 144)
+	panel.offset_left = -476.0 * hud_scale
+	panel.offset_top = -160.0 * hud_scale
+	panel.offset_right = -16.0 * hud_scale
+	panel.offset_bottom = -16.0 * hud_scale
+	panel.custom_minimum_size = Vector2(460, 144) * hud_scale
+	panel.scale = Vector2.ONE * hud_scale
+	panel.pivot_offset = Vector2(460, 144)
 	var panel_style := StyleBoxFlat.new()
 	panel_style.bg_color = Color(0.04, 0.07, 0.11, 0.92)
 	panel_style.border_color = Color("#52657D")
@@ -755,8 +759,8 @@ func _setup_player_controls() -> void:
 	_player_surrender_button = _make_screen_button("СДАТЬСЯ", Color("#6E2A22"))
 
 	for button in [_player_hint_button, _player_normal_reset_button, _player_deadend_reset_button, _player_surrender_button]:
-		button.custom_minimum_size = Vector2(210, 58)
-		button.add_theme_font_size_override("font_size", 22)
+		button.custom_minimum_size = Vector2(210, 58) * hud_scale
+		button.add_theme_font_size_override("font_size", maxi(14, roundi(22.0 * hud_scale)))
 		grid.add_child(button)
 
 	_player_hint_button.pressed.connect(_on_player_hint_pressed)
