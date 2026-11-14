@@ -496,11 +496,11 @@ func _build_additional_screen_ui(viewport: SubViewport, slot: int) -> Dictionary
 	column.add_theme_constant_override("separation", _si(6))
 	margin.add_child(column)
 
-	var title := _make_label("СТАТИСТИКА · ИГРОК %d" % slot, 32, Color("#F2C35B"))
+	var title := _make_label("СТАТИСТИКА · ИГРОК %d" % slot, 28, Color("#F2C35B"))
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	column.add_child(title)
 
-	var status := _make_label("ОЖИДАНИЕ АНАЛИЗА", 22, Color("#86E8CF"))
+	var status := _make_label("ОЖИДАНИЕ АНАЛИЗА", 19, Color("#86E8CF"))
 	status.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	column.add_child(status)
 
@@ -516,7 +516,7 @@ func _build_additional_screen_ui(viewport: SubViewport, slot: int) -> Dictionary
 	second_row.add_theme_constant_override("separation", _si(10))
 	column.add_child(second_row)
 	var normal_left := _create_additional_metric(second_row, "ХОДОВ ДО СЛЕДУЮЩЕГО СБРОСА", "—", Color("#86E8CF"))
-	var normal_rollback := _create_additional_metric(second_row, "ОТКАТ ОБЫЧНОГО СБРОСА · ПОСЛЕДНИЕ N ХОДОВ", "—", Color("#F2C35B"))
+	var normal_rollback := _create_additional_metric(second_row, "ОТКАТ · ПОСЛЕДНИЕ N ХОДОВ", "—", Color("#F2C35B"))
 
 	var third_row := HBoxContainer.new()
 	third_row.size_flags_vertical = Control.SIZE_EXPAND_FILL
@@ -572,20 +572,20 @@ func _create_additional_metric(parent: Control, caption_text: String, value_text
 
 	var margin := MarginContainer.new()
 	for side in ["left", "right", "top", "bottom"]:
-		margin.add_theme_constant_override("margin_" + side, _si(12))
+		margin.add_theme_constant_override("margin_" + side, _si(8))
 	panel.add_child(margin)
 
 	var content := VBoxContainer.new()
 	content.alignment = BoxContainer.ALIGNMENT_CENTER
-	content.add_theme_constant_override("separation", _si(4))
+	content.add_theme_constant_override("separation", _si(2))
 	margin.add_child(content)
 
-	var caption := _make_label(caption_text, 20, Color("#9AAEC4"))
+	var caption := _make_label(caption_text, 17, Color("#9AAEC4"))
 	caption.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	caption.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	content.add_child(caption)
 
-	var value := _make_label(value_text, 58, value_color)
+	var value := _make_label(value_text, 44, value_color)
 	value.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	value.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	content.add_child(value)
