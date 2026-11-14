@@ -616,27 +616,30 @@ func normal_reset_field(field_id: String) -> bool:
 	return _redeal_field(field_id, get_normal_reset_cost(field_id), true)
 
 
-## Тупиковый сброс: всегда отменяет ровно два последних хода и не меняет
-## счётчик обычных сбросов.
+## Тупиковый сброс: сохраняет первые 10 ходов, остальные отменяет.
+## Если ходов не больше десяти, просто выполняет новую раздачу.
 func deadend_reset_field(field_id: String) -> bool:
-	return _redeal_field(field_id, 2, false)
+	var field_moves := get_field_history_count(field_id)
+	var undo_steps := maxi(0, field_moves - 10)
+	return _redeal_field(field_id, undo_steps, false)
 
 
 
 func _redeal_field(field_id: String, undo_steps: int, count_normal_reset: bool) -> bool:
 	if game_finished or is_dealing or not rules is KlondikeRules:
 		return false
-	if undo_steps <= 0:
+	if undo_steps < 0 or (undo_steps == 0 and count_normal_reset):
 		return false
 
 	# Выбираем ровно N последних записей целевого поля, а не N последних
 	# глобальных записей: в зеркальной одиночной партии история общая.
 	var selected_indices: Array[int] = []
-	for history_index in range(history.size() - 1, -1, -1):
-		if _record_field(history[history_index]) == field_id:
-			selected_indices.append(history_index)
-			if selected_indices.size() >= undo_steps:
-				break
+	if undo_steps > 0:
+		for history_index in range(history.size() - 1, -1, -1):
+			if _record_field(history[history_index]) == field_id:
+				selected_indices.append(history_index)
+				if selected_indices.size() >= undo_steps:
+					break
 	if selected_indices.size() < undo_steps:
 		return false
 
