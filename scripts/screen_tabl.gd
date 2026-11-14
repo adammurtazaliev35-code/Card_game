@@ -647,15 +647,15 @@ func _refresh_additional_screen_entry(slot: int, ui: Dictionary) -> void:
 
 	if network_session_active and slot != local_player_slot:
 		status.text = "ПОЛЕ СОПЕРНИКА"
-		for label: Label in metric_labels:
-			label.text = "—"
+		for label in metric_labels:
+			(label as Label).text = "—"
 		return
 
 	var field_id := _get_additional_field_id(slot)
 	if field_id.is_empty():
 		status.text = "ПОЛЕ НЕ НАЙДЕНО"
-		for label: Label in metric_labels:
-			label.text = "—"
+		for label in metric_labels:
+			(label as Label).text = "—"
 		return
 
 	var history_count := game_manager.get_field_history_count(field_id)
@@ -705,9 +705,12 @@ func _get_player_field_id() -> String:
 
 
 func _setup_player_controls() -> void:
+	# В меню уровень работает в SubViewport как фон с ботом — HUD там не нужен.
+	if get_viewport() != get_tree().root:
+		return
 	_player_hud_layer = CanvasLayer.new()
 	_player_hud_layer.name = "PlayerGameControls"
-	_player_hud_layer.layer = 20
+	_player_hud_layer.layer = 10
 	add_child(_player_hud_layer)
 
 	_player_hud_root = Control.new()
@@ -722,11 +725,17 @@ func _setup_player_controls() -> void:
 	panel.anchor_top = 1.0
 	panel.anchor_right = 1.0
 	panel.anchor_bottom = 1.0
-	panel.offset_left = -440.0
-	panel.offset_top = -148.0
-	panel.offset_right = -18.0
-	panel.offset_bottom = -18.0
-	panel.custom_minimum_size = Vector2(420, 130)
+	panel.offset_left = -476.0
+	panel.offset_top = -160.0
+	panel.offset_right = -16.0
+	panel.offset_bottom = -16.0
+	panel.custom_minimum_size = Vector2(460, 144)
+	var panel_style := StyleBoxFlat.new()
+	panel_style.bg_color = Color(0.04, 0.07, 0.11, 0.92)
+	panel_style.border_color = Color("#52657D")
+	panel_style.set_border_width_all(2)
+	panel_style.set_corner_radius_all(10)
+	panel.add_theme_stylebox_override("panel", panel_style)
 	_player_hud_root.add_child(panel)
 
 	var margin := MarginContainer.new()
@@ -746,8 +755,8 @@ func _setup_player_controls() -> void:
 	_player_surrender_button = _make_screen_button("СДАТЬСЯ", Color("#6E2A22"))
 
 	for button in [_player_hint_button, _player_normal_reset_button, _player_deadend_reset_button, _player_surrender_button]:
-		button.custom_minimum_size = Vector2(190, 52)
-		button.add_theme_font_size_override("font_size", 18)
+		button.custom_minimum_size = Vector2(210, 58)
+		button.add_theme_font_size_override("font_size", 22)
 		grid.add_child(button)
 
 	_player_hint_button.pressed.connect(_on_player_hint_pressed)
