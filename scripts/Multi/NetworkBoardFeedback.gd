@@ -78,6 +78,7 @@ var _remote_drag_cards: Array[Card] = []
 var _remote_drag_offsets: Array[Vector3] = []
 var _remote_drag_target := Vector3.ZERO
 var _release_flash := 0.0
+var _remote_speaking := false
 
 
 func _ready() -> void:
@@ -470,18 +471,25 @@ func _update_remote_visuals(delta: float) -> void:
 			scale_goal = 1.2
 		PointerState.DRAG:
 			scale_goal = 0.75
+
 	_release_flash = maxf(0.0, _release_flash - delta * 3.0)
 	scale_goal += _release_flash * 0.8
-	_remote_cursor.scale = _remote_cursor.scale.lerp(Vector3.ONE * scale_goal, t)
-	_remote_label.text = "%s · %s" % [NetworkMatchState.name_of(_remote_slot), _state_caption()]
-	var voice_pulse := 0.0
 
+	var voice_pulse := 0.0
 	if _remote_speaking:
 		voice_pulse = 0.5 + 0.5 * sin(_now() * TAU * 2.0)
 		scale_goal *= 1.0 + voice_pulse * 0.12
 		_remote_cursor_material.emission_energy_multiplier = lerpf(1.2, 2.0, voice_pulse)
 	else:
 		_remote_cursor_material.emission_energy_multiplier = 1.2
+
+	_remote_cursor.scale = _remote_cursor.scale.lerp(Vector3.ONE * scale_goal, t)
+	var voice_caption := " · В ЭФИРЕ" if _remote_speaking else ""
+	_remote_label.text = "%s · %s%s" % [
+		NetworkMatchState.name_of(_remote_slot),
+		_state_caption(),
+		voice_caption
+	]
 	# Карты, которые соперник тащит, плавно следуют за его рукой.
 	if not _remote_drag_cards.is_empty():
 		var lead := _remote_drag_cards[0]
@@ -517,6 +525,10 @@ func _state_caption() -> String:
 		PointerState.RELEASE:
 			return "отпустил"
 	return "ход"
+
+
+func set_remote_speaking(value: bool) -> void:
+	_remote_speaking = value
 
 
 func _now() -> float:
@@ -665,6 +677,7 @@ func _set_outline_edge(index: int, local_position: Vector3, box_size: Vector3) -
 func _on_client_left(client_id: int) -> void:
 	if NetworkMatchState.slot_of(client_id) == _remote_slot:
 		_remote_last_seen = -1000.0
+		_remote_speaking = false
 		_end_remote_drag()
 		_hide_remote()
 
@@ -672,5 +685,6 @@ func _on_client_left(client_id: int) -> void:
 func _on_disconnected() -> void:
 	NetworkMatchState.clear()
 	_remote_last_seen = -1000.0
+	_remote_speaking = false
 	_end_remote_drag()
 	_hide_remote()
