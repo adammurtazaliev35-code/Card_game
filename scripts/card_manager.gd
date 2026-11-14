@@ -17,6 +17,10 @@ const LAYER_PILES := 2
 var _last_stock_click_ms := -100000
 var _dragging: Array[Card] = []     # [0] - ведущая карта, остальные тянутся за ней
 var _offsets: Array[Vector3] = []   # смещения остальных карт относительно ведущей
+var _hint_visual_root: Node3D
+var _hint_card: Card
+var _hint_card_home := Vector3.ZERO
+var _hint_card_tween: Tween
 
 
 func _ready() -> void:
@@ -51,23 +55,155 @@ func _hint_field_id() -> String:
 	return ids[0] if not ids.is_empty() else GameManager.FIELD_MAIN
 
 
-## Подсветка первого хода подсказки: карта (или колода) дважды «подпрыгивает».
+## Публичный вход для кнопки на интерфейсе игрока.
+func show_hint(entries: Array) -> void:
+	_show_hint(entries)
+
+
+## Подсказка очищается только когда игрок начинает действие с картой/колодой.
+func clear_hint() -> void:
+	_clear_hint_visual()
+
+
+## Визуальная подсказка: выбранная карта пульсирует, стрелка ведёт к стопке-цели.
+## Стрелка и пульсация остаются до первого захвата карты игроком.
 func _show_hint(entries: Array) -> void:
+	_clear_hint_visual()
 	if entries.is_empty():
 		return
 	var first: Dictionary = entries[0]
-	var pile: Pile = first.get("from_pile")
-	if pile == null or pile.cards.is_empty():
+	var source := first.get("from_pile") as Pile
+	if not is_instance_valid(source):
 		return
-	var index := int(first.get("card_index", pile.cards.size() - 1))
-	var card: Card = pile.cards[clampi(index, 0, pile.cards.size() - 1)]
+	if first.has("draw") or first.has("recycle") or source.cards.is_empty():
+		_create_hint_marker(source)
+		return
+
+	var index := clampi(int(first.get("card_index", source.cards.size() - 1)), 0, source.cards.size() - 1)
+	var card := source.cards[index] as Card
 	if not is_instance_valid(card) or card.visual == null:
+		_create_hint_marker(source)
 		return
-	var home := card.visual.position
-	var tween := card.create_tween()
-	for _i in 2:
-		tween.tween_property(card.visual, "position", home + Vector3(0, 0.025, 0), 0.18).set_trans(Tween.TRANS_SINE)
-		tween.tween_property(card.visual, "position", home, 0.18).set_trans(Tween.TRANS_SINE)
+
+	_hint_card = card
+	_hint_card_home = card.visual.position
+	_hint_card_tween = card.create_tween()
+	_hint_card_tween.set_loops()
+	_hint_card_tween.tween_property(
+		card.visual, "position", _hint_card_home + Vector3(0.0, 0.035, 0.0), 0.42
+	).set_trans(Tween.TRANS_SINE)
+	_hint_card_tween.tween_property(
+		card.visual, "position", _hint_card_home, 0.42
+	).set_trans(Tween.TRANS_SINE)
+
+	var target := first.get("to_pile") as Pile
+	if is_instance_valid(target):
+		_create_hint_arrow(card.global_position, target.global_position)
+	else:
+		_create_hint_marker(source)
+
+
+func _make_hint_material() -> StandardMaterial3D:
+	var material := StandardMaterial3D.new()
+	material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	material.albedo_color = Color("#F2C35B")
+	material.emission_enabled = true
+	material.emission = Color("#F2C35B")
+	material.emission_energy_multiplier = 2.2
+	return material
+
+
+func _create_hint_marker(pile: Pile) -> void:
+	if not is_instance_valid(pile):
+		return
+	_hint_visual_root = Node3D.new()
+	_hint_visual_root.name = "HintPileMarker"
+	_hint_visual_root.top_level = true
+	add_child(_hint_visual_root)
+	_hint_visual_root.global_position = pile.global_position + Vector3.UP * 0.22
+
+	var ring := MeshInstance3D.new()
+	var ring_mesh := TorusMesh.new()
+	ring_mesh.inner_radius = 0.13
+	ring_mesh.outer_radius = 0.19
+	ring.mesh = ring_mesh
+	ring.material_override = _make_hint_material()
+	_hint_visual_root.add_child(ring)
+	_start_hint_pulse()
+
+
+func _create_hint_arrow(source_position: Vector3, target_position: Vector3) -> void:
+	var start := source_position + Vector3.UP * 0.34
+	var finish := target_position + Vector3.UP * 0.34
+	var direction := finish - start
+	direction.y = 0.0
+	var length := direction.length()
+	if length < 0.12:
+		return
+
+	_hint_visual_root = Node3D.new()
+	_hint_visual_root.name = "HintMoveArrow"
+	_hint_visual_root.top_level = true
+	add_child(_hint_visual_root)
+	_hint_visual_root.global_position = start
+	_hint_visual_root.look_at(Vector3(finish.x, start.y, finish.z), Vector3.UP)
+
+	var material := _make_hint_material()
+	var head_length := minf(0.24, length * 0.35)
+	var shaft_length := maxf(0.06, length - head_length)
+
+	var shaft := MeshInstance3D.new()
+	var shaft_mesh := CylinderMesh.new()
+	shaft_mesh.top_radius = 0.035
+	shaft_mesh.bottom_radius = 0.035
+	shaft_mesh.height = shaft_length
+	shaft.mesh = shaft_mesh
+	shaft.rotation.x = -PI * 0.5
+	shaft.position.z = -shaft_length * 0.5
+	shaft.material_override = material
+	_hint_visual_root.add_child(shaft)
+
+	var head := MeshInstance3D.new()
+	var head_mesh := ConeMesh.new()
+	head_mesh.bottom_radius = 0.12
+	head_mesh.top_radius = 0.0
+	head_mesh.height = head_length
+	head.mesh = head_mesh
+	head.rotation.x = -PI * 0.5
+	head.position.z = -(shaft_length + head_length * 0.5)
+	head.material_override = material
+	_hint_visual_root.add_child(head)
+
+	var target_ring := MeshInstance3D.new()
+	var target_mesh := TorusMesh.new()
+	target_mesh.inner_radius = 0.12
+	target_mesh.outer_radius = 0.18
+	target_ring.mesh = target_mesh
+	target_ring.position.z = -length
+	target_ring.material_override = material
+	_hint_visual_root.add_child(target_ring)
+	_start_hint_pulse()
+
+
+func _start_hint_pulse() -> void:
+	if not is_instance_valid(_hint_visual_root):
+		return
+	var pulse := create_tween()
+	pulse.set_loops()
+	pulse.tween_property(_hint_visual_root, "scale", Vector3.ONE * 1.10, 0.45).set_trans(Tween.TRANS_SINE)
+	pulse.tween_property(_hint_visual_root, "scale", Vector3.ONE, 0.45).set_trans(Tween.TRANS_SINE)
+
+
+func _clear_hint_visual() -> void:
+	if _hint_card_tween != null and _hint_card_tween.is_valid():
+		_hint_card_tween.kill()
+	_hint_card_tween = null
+	if is_instance_valid(_hint_card) and is_instance_valid(_hint_card.visual):
+		_hint_card.visual.position = _hint_card_home
+	_hint_card = null
+	if is_instance_valid(_hint_visual_root):
+		_hint_visual_root.queue_free()
+	_hint_visual_root = null
 
 
 ## Защита раздачи из колоды: не во время раздачи, не чаще stock_click_cooldown,
@@ -153,6 +289,7 @@ func _try_pick_card(screen_pos: Vector2) -> void:
 		# пустая колода: клик по самой зоне стопки
 		var pile := _resolve_pile(_ray(screen_pos, LAYER_PILES).get("collider"))
 		if pile != null and _can_interact(pile) and _stock_click_allowed(pile):
+			clear_hint()
 			rules.on_pile_clicked(pile)
 		return
 
@@ -163,15 +300,19 @@ func _try_pick_card(screen_pos: Vector2) -> void:
 	# клик по колоде: правила сами решат, что делать (взять карту / перевернуть сброс)
 	if card.pile is Pile and (card.pile as Pile).kind == PileMarker.Kind.STOCK:
 		if _stock_click_allowed(card.pile):
+			clear_hint()
 			rules.on_pile_clicked(card.pile)
 		return
 	if card.pile != null and rules.on_pile_clicked(card.pile):
+		clear_hint()
 		return
 
 	var group := rules.get_group(card)
 	if group.is_empty():
 		return
 
+	# Любой успешный захват карты — начало следующего хода, поэтому гасим подсказку.
+	clear_hint()
 	_dragging = group
 	_offsets.clear()
 	for c in group:
