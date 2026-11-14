@@ -198,8 +198,9 @@ func _unhandled_input(event: InputEvent) -> void:
 				game_manager.undo()
 		# H — подсказка (тратит одну подсказку из лимита партии)
 		elif event.keycode == KEY_H and _dragging.is_empty() and game_manager:
-			var entries := game_manager.request_hint(_hint_field_id())
-			_show_hint(entries)
+			# GameManager.emit(hint_ready) направит найденный ход в Screens,
+			# откуда стрелка попадёт обратно в этот CardManager.
+			game_manager.request_hint(_hint_field_id())
 
 
 func _process(delta: float) -> void:
@@ -248,8 +249,8 @@ func _try_pick_card(screen_pos: Vector2) -> void:
 
 	# клик по колоде: правила сами решат, что делать (взять карту / перевернуть сброс)
 	if card.pile is Pile and (card.pile as Pile).kind == PileMarker.Kind.STOCK:
-		if _stock_click_allowed(card.pile):
-			rules.on_pile_clicked(card.pile)
+		if _stock_click_allowed(card.pile) and rules.on_pile_clicked(card.pile):
+			_clear_hint()
 		return
 	if card.pile != null and rules.on_pile_clicked(card.pile):
 		_clear_hint()
