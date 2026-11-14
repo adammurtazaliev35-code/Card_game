@@ -946,6 +946,16 @@ func _play_random_field_moves(field_id: String, max_moves: int) -> int:
 		for source in field_piles:
 			if source.kind == PileMarker.Kind.STOCK:
 				continue
+			# В Паукe источником случайного хода может быть только колонка.
+			# Собранные завершённые ряды и служебные стопки не должны возвращаться в игру.
+			if rules is SpiderRules and source.kind != PileMarker.Kind.TABLEAU:
+				continue
+			if rules is KlondikeRules and source.kind not in [
+				PileMarker.Kind.TABLEAU,
+				PileMarker.Kind.WASTE,
+				PileMarker.Kind.FOUNDATION
+			]:
+				continue
 			for card in source.cards:
 				if not is_instance_valid(card) or not card.face_up:
 					continue
