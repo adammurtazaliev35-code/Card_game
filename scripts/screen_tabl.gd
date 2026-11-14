@@ -733,6 +733,10 @@ func _connect_player_action_buttons() -> void:
 
 
 func _player_slot(ui: Dictionary) -> int:
+	# В Ring интерфейс один на локального игрока, поэтому не привязываем
+	# его кнопки к P1 при подключении игрока со слотом 2.
+	if display_mode == DisplayMode.RING and network_session_active:
+		return local_player_slot
 	return 2 if ui.get("panel") == player_two_ui.get("panel") else 1
 
 
