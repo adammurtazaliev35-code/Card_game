@@ -38,6 +38,8 @@ func _build_tabs() -> void:
 	tabs.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	tabs.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	tabs.custom_minimum_size = Vector2(540, 400)
+	tabs.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	tabs.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	tabs.add_theme_font_size_override("font_size", 18)
 
 	# The default TabContainer theme is square and grey. Give the tab strip and
@@ -219,6 +221,9 @@ func _prepare_tab_page(tabs: TabContainer, page_content: Control) -> void:
 	margin.name = str(page_content.name)
 	margin.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	margin.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	# Все вкладки получают одинаковую рабочую область: высота содержимого
+	# конкретной вкладки больше не меняет геометрию TabContainer при переключении.
+	margin.custom_minimum_size = Vector2(540, 400)
 	for side in ["left", "right"]:
 		margin.add_theme_constant_override("margin_" + side, 24)
 	for side in ["top", "bottom"]:
