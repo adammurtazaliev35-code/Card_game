@@ -105,6 +105,7 @@ var screen_refresh_queued := false
 # Подсказка рисуется в 3D над картами/стопками и исчезает при первом действии с картой.
 var _hint_arrow_root: Node3D
 var _player_hud_layer: CanvasLayer
+var _player_hud_root: Control
 var _player_hint_button: Button
 var _player_normal_reset_button: Button
 var _player_deadend_reset_button: Button
@@ -709,11 +710,11 @@ func _setup_player_controls() -> void:
 	_player_hud_layer.layer = 20
 	add_child(_player_hud_layer)
 
-	var root := Control.new()
-	root.name = "PlayerControlsRoot"
-	root.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	root.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_player_hud_layer.add_child(root)
+	_player_hud_root = Control.new()
+	_player_hud_root.name = "PlayerControlsRoot"
+	_player_hud_root.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_player_hud_root.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_player_hud_layer.add_child(_player_hud_root)
 
 	var panel := PanelContainer.new()
 	panel.name = "PlayerControlsPanel"
@@ -726,7 +727,7 @@ func _setup_player_controls() -> void:
 	panel.offset_right = -18.0
 	panel.offset_bottom = -18.0
 	panel.custom_minimum_size = Vector2(420, 130)
-	root.add_child(panel)
+	_player_hud_root.add_child(panel)
 
 	var margin := MarginContainer.new()
 	for side in ["left", "right", "top", "bottom"]:
@@ -764,7 +765,7 @@ func _refresh_player_controls() -> void:
 		and game_manager.rules is KlondikeRules
 		and not game_manager.game_finished
 	)
-	_player_hud_layer.visible = supported
+	_player_hud_root.visible = supported
 	if not supported:
 		return
 
@@ -1363,6 +1364,19 @@ func _screen_mesh_supports_surface(mesh_instance: MeshInstance3D, surface_index:
 
 
 
+func _input(event: InputEvent) -> void:
+	if not is_instance_valid(_hint_arrow_root):
+		return
+	if event is InputEventMouseButton:
+		var mouse_event := event as InputEventMouseButton
+		if mouse_event.button_index == MOUSE_BUTTON_LEFT and mouse_event.pressed:
+			_clear_hint_on_board_press(mouse_event.position)
+	elif event is InputEventScreenTouch:
+		var touch_event := event as InputEventScreenTouch
+		if touch_event.pressed:
+			_clear_hint_on_board_press(touch_event.position)
+
+
 func _unhandled_input(event: InputEvent) -> void:
 	var pointer_key := ""
 	var pointer_position := Vector2.ZERO
@@ -1383,8 +1397,6 @@ func _unhandled_input(event: InputEvent) -> void:
 		return
 
 	if is_pressed:
-		if is_instance_valid(_hint_arrow_root):
-			_clear_hint_on_board_press(pointer_position)
 		if _screen_pointer_routes.has(pointer_key):
 			return
 		var additional_hit: Variant = _additional_screen_pixel_under_mouse(pointer_position)
