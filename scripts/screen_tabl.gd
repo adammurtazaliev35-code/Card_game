@@ -121,6 +121,7 @@ var last_displayed_second := -1
 
 func _ready() -> void:
 	add_to_group("screens")
+	GameSettings.ensure_loaded()
 
 	# Переносим старые настройки ригов, чтобы обновление скрипта не сбросило координаты.
 	if single_board_position == Vector3.ZERO and classic_position != Vector3.ZERO:
@@ -148,12 +149,14 @@ func _ready() -> void:
 		additional_screen_models.append(additional_screen_model as MeshInstance3D)
 
 	_setup_viewport()
+	_setup_camera_action_hud()
 	_setup_additional_viewports()
 	_setup_screen_material()
 	_setup_additional_screen_material()
 	_setup_screen_touch()
 	_setup_undo_buttons()
 	_connect_player_action_buttons()
+	_connect_camera_action_hud()
 	for ui in [player_one_ui, player_two_ui]:
 		if ui.is_empty():
 			continue
@@ -194,6 +197,7 @@ func set_network_session_state(
 	_queue_screen_refresh()
 	_refresh_additional_screens()
 	_refresh_player_actions()
+	_refresh_camera_action_hud()
 
 
 func request_create_lobby() -> void:
@@ -245,6 +249,7 @@ func _apply_display_transform() -> void:
 			screen_rig_2.rotation_degrees = default_screen_rotation_2
 
 	_apply_additional_screen_visibility(network_dual_screen)
+	_refresh_camera_action_hud()
 
 
 func _apply_additional_screen_visibility(network_dual_screen: bool) -> void:
@@ -720,6 +725,123 @@ func _on_hint_ready(field_id: String, entries: Array) -> void:
 		card_manager.show_hint(entries)
 
 
+
+# ==================================================
+# CAMERA HUD — DUPLICATED HINT / RESET CONTROLS
+# ==================================================
+var camera_action_hud_layer: CanvasLayer
+var camera_action_hud_root: Control
+var camera_action_hud_p1: Dictionary = {}
+var camera_action_hud_p2: Dictionary = {}
+
+
+func _setup_camera_action_hud() -> void:
+	camera_action_hud_layer = CanvasLayer.new()
+	camera_action_hud_layer.name = "CameraActionHUD"
+	camera_action_hud_layer.layer = 20
+	add_child(camera_action_hud_layer)
+
+	camera_action_hud_root = Control.new()
+	camera_action_hud_root.name = "CameraActionHUDRoot"
+	camera_action_hud_root.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	camera_action_hud_root.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	camera_action_hud_layer.add_child(camera_action_hud_root)
+
+	camera_action_hud_p1 = _create_camera_action_group(1)
+	camera_action_hud_p2 = _create_camera_action_group(2)
+	_refresh_camera_action_hud()
+
+
+func _create_camera_action_group(slot: int) -> Dictionary:
+	var panel := PanelContainer.new()
+	panel.name = "Player%dActionHUD" % slot
+	panel.mouse_filter = Control.MOUSE_FILTER_STOP
+	panel.set_anchors_preset(Control.PRESET_BOTTOM_LEFT if slot == 1 else Control.PRESET_BOTTOM_RIGHT)
+	panel.position = Vector2(18 if slot == 1 else -18, -76)
+	panel.grow_horizontal = Control.GROW_DIRECTION_END if slot == 1 else Control.GROW_DIRECTION_BEGIN
+	panel.grow_vertical = Control.GROW_DIRECTION_BEGIN
+	var style := StyleBoxFlat.new()
+	style.bg_color = Color(0.035, 0.055, 0.08, 0.82)
+	style.border_color = Color(0.55, 0.78, 0.78, 0.9)
+	style.set_border_width_all(1)
+	style.set_corner_radius_all(10)
+	style.content_margin_left = 7
+	style.content_margin_right = 7
+	style.content_margin_top = 6
+	style.content_margin_bottom = 6
+	panel.add_theme_stylebox_override("panel", style)
+	camera_action_hud_root.add_child(panel)
+
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 8)
+	panel.add_child(row)
+	var hint := _make_screen_button("ПОДСКАЗКА", Color("#44366D"))
+	var reset := _make_screen_button("СБРОС", Color("#245A4A"))
+	for button in [hint, reset]:
+		button.custom_minimum_size = Vector2(150, 50)
+		button.add_theme_font_size_override("font_size", 17)
+		button.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+		row.add_child(button)
+	return {"root": panel, "hint": hint, "reset": reset, "slot": slot}
+
+
+func _connect_camera_action_hud() -> void:
+	if not camera_action_hud_p1.is_empty():
+		(camera_action_hud_p1["hint"] as Button).pressed.connect(_on_player_hint.bind(player_one_ui))
+		(camera_action_hud_p1["reset"] as Button).pressed.connect(_on_player_reset.bind(player_one_ui))
+	if not camera_action_hud_p2.is_empty():
+		(camera_action_hud_p2["hint"] as Button).pressed.connect(_on_player_hint.bind(player_two_ui))
+		(camera_action_hud_p2["reset"] as Button).pressed.connect(_on_player_reset.bind(player_two_ui))
+
+
+func refresh_camera_action_hud() -> void:
+	_refresh_camera_action_hud()
+
+
+func _refresh_camera_action_hud() -> void:
+	if camera_action_hud_root == null:
+		return
+	var enabled := GameSettings.show_camera_action_buttons
+	camera_action_hud_root.visible = enabled
+	if not enabled:
+		return
+
+	var dual_local_fields := (
+		display_mode == DisplayMode.MIRRORED
+		or (display_mode == DisplayMode.MULTIPLAYER and not network_session_active)
+	)
+	var show_p1 := true
+	var show_p2 := dual_local_fields and not player_two_ui.is_empty()
+	if network_session_active:
+		show_p1 = local_player_slot == 1
+		show_p2 = local_player_slot == 2
+	(camera_action_hud_p1["root"] as Control).visible = show_p1
+	(camera_action_hud_p2["root"] as Control).visible = show_p2
+	if not player_one_ui.is_empty():
+		_update_camera_action_group(player_one_ui, camera_action_hud_p1)
+	if not player_two_ui.is_empty():
+		_update_camera_action_group(player_two_ui, camera_action_hud_p2)
+
+
+func _update_camera_action_group(ui: Dictionary, actions: Dictionary) -> void:
+	var field_id := _player_field_id(ui)
+	var local_field := not field_id.is_empty() and _is_local_field(field_id)
+	var busy := game_manager == null or game_manager.is_dealing or game_manager.game_finished
+	var can_hint := game_manager != null and (game_manager.rules is KlondikeRules or game_manager.rules is SpiderRules)
+	var hint_button := actions["hint"] as Button
+	hint_button.disabled = busy or not local_field or not can_hint or game_manager.hint_charges <= 0
+	hint_button.text = "ПОДСКАЗКА %d" % game_manager.hint_charges if game_manager != null else "ПОДСКАЗКА"
+	var history_count := game_manager.get_field_history_count(field_id) if game_manager != null and local_field else 0
+	var normal_cost := game_manager.get_normal_reset_cost(field_id) if game_manager != null and local_field else 10
+	var info: Dictionary = game_manager.field_verdicts.get(field_id, {}) if game_manager != null and local_field else {}
+	var is_dead_end := int(info.get("verdict", -1)) == KlondikePredictor.Verdict.DEAD_END
+	var supports_reset := game_manager != null and (game_manager.rules is KlondikeRules or game_manager.rules is SpiderRules)
+	var can_reset := supports_reset and GameSession.allow_deadend_reset and local_field and (is_dead_end or history_count >= normal_cost)
+	var reset_button := actions["reset"] as Button
+	reset_button.disabled = busy or not can_reset
+	reset_button.text = "ТУПИК" if is_dead_end else "СБРОС %d" % normal_cost
+
+
 func _connect_player_action_buttons() -> void:
 	for ui in [player_one_ui, player_two_ui]:
 		if ui.is_empty():
@@ -790,6 +912,7 @@ func _refresh_player_actions() -> void:
 		_update_player_action_set(ui, ui.get("actions", {}))
 	if not ring_ui.is_empty():
 		_update_player_action_set(player_one_ui, ring_ui.get("actions", {}))
+	_refresh_camera_action_hud()
 
 
 func _update_player_action_set(ui: Dictionary, actions: Dictionary) -> void:
