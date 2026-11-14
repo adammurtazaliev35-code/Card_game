@@ -1033,7 +1033,7 @@ func _create_player_panel(parent: HBoxContainer, player_title: String) -> Dictio
 	var undo_action := _make_screen_button("ОТМЕНА", Color("#334B68"))
 	var reset_action := _make_screen_button("СБРОС", Color("#245A4A"))
 	for action_button in [hint_action, undo_action, reset_action]:
-		action_button.custom_minimum_size = Vector2(_s(138), _s(44))
+		action_button.custom_minimum_size = Vector2(_s(138), _s(48))
 		action_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		actions_row.add_child(action_button)
 
@@ -1112,8 +1112,8 @@ func _create_deadend_overlay(panel: PanelContainer) -> Dictionary:
 func _make_screen_button(text_value: String, base: Color) -> Button:
 	var button := Button.new()
 	button.text = text_value
-	button.custom_minimum_size = Vector2(_s(138), _s(44))
-	button.add_theme_font_size_override("font_size", _si(16))
+	button.custom_minimum_size = Vector2(_s(138), _s(48))
+	button.add_theme_font_size_override("font_size", _si(18))
 	for state in ["normal", "hover", "pressed", "focus"]:
 		var style := StyleBoxFlat.new()
 		style.bg_color = base.lightened(0.15) if state == "hover" else (base.darkened(0.2) if state == "pressed" else base)
@@ -1565,7 +1565,7 @@ func _create_ring_ui(parent: Control) -> Dictionary:
 	var ring_undo_action := _make_screen_button("ОТМЕНА", Color("#334B68"))
 	var ring_reset_action := _make_screen_button("СБРОС", Color("#245A4A"))
 	for action_button in [ring_hint_action, ring_undo_action, ring_reset_action]:
-		action_button.custom_minimum_size = Vector2(_s(155), _s(38))
+		action_button.custom_minimum_size = Vector2(_s(155), _s(44))
 		action_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		ring_actions_row.add_child(action_button)
 
