@@ -153,6 +153,12 @@ func _ready() -> void:
 
 	_setup_viewport()
 	_setup_additional_viewports()
+	# Кнопки внутри SubViewport должны запрашивать кадр при наведении,
+	# нажатии и смене фокуса, даже если между событиями игры viewport спит.
+	_bind_scoreboard_button_redraws(screen_viewport, screen_viewport)
+	for entry in additional_screen_entries:
+		var additional_viewport := entry.get("viewport") as SubViewport
+		_bind_scoreboard_button_redraws(additional_viewport, additional_viewport)
 	_setup_screen_material()
 	_setup_additional_screen_material()
 	_setup_screen_touch()
@@ -468,6 +474,29 @@ func _setup_additional_viewports() -> void:
 			"mdt": null,
 			"click_area": null
 		})
+
+## Подключает события визуального состояния всех кнопок к одноразовой отрисовке
+## их SubViewport. UPDATE_ONCE иначе оставил бы текстуру со старым hover/pressed видом.
+func _bind_scoreboard_button_redraws(node: Node, viewport: SubViewport) -> void:
+	if node == null or not is_instance_valid(viewport):
+		return
+	if node is BaseButton:
+		var button := node as BaseButton
+		var redraw := _request_viewport_update_for.bind(viewport)
+		button.mouse_entered.connect(redraw)
+		button.mouse_exited.connect(redraw)
+		button.button_down.connect(redraw)
+		button.button_up.connect(redraw)
+		button.focus_entered.connect(redraw)
+		button.focus_exited.connect(redraw)
+	for child in node.get_children():
+		_bind_scoreboard_button_redraws(child, viewport)
+
+
+func _request_viewport_update_for(viewport: SubViewport) -> void:
+	if is_instance_valid(viewport):
+		viewport.render_target_update_mode = SubViewport.UPDATE_ONCE
+
 
 func _build_additional_screen_ui(viewport: SubViewport, slot: int) -> Dictionary:
 	var previous_scale := ui_scale
@@ -2333,17 +2362,22 @@ func _on_statistics_changed(
 		if not own_ui.is_empty():
 			_update_panel_statistics(own_ui, new_moves, new_undos, new_available_undos)
 		_update_ring_statistics(new_moves, new_undos, new_available_undos)
+		_request_screen_viewport_update()
 		return
 	if display_mode == DisplayMode.MIRRORED:
 		# У каждого поля своя статистика — панели перерисует общий refresh.
 		_queue_screen_refresh()
 		_update_ring_statistics(new_moves, new_undos, new_available_undos)
+		_request_screen_viewport_update()
 		return
 	if not player_one_ui.is_empty():
 		_update_panel_statistics(player_one_ui, new_moves, new_undos, new_available_undos)
 	if not player_two_ui.is_empty() and player_two_stock != null and player_two_ui["panel"].visible:
 		_update_panel_statistics(player_two_ui, new_moves, new_undos, new_available_undos)
 	_update_ring_statistics(new_moves, new_undos, new_available_undos)
+	_request_screen_viewport_update()
+
+
 func _update_panel_statistics(ui: Dictionary, moves: int, undos: int, available: int) -> void:
 	if ui.is_empty():
 		return
