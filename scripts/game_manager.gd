@@ -719,8 +719,7 @@ func normal_reset_field(field_id: String) -> bool:
 	return _redeal_field(field_id, get_normal_reset_cost(field_id), true)
 
 
-## Тупиковый сброс отменяет только ходы после первых десяти.
-## При числе ходов <= 10 поле просто перетасовывается без отката истории.
+## Тупиковый сброс отменяет до двух последних ходов поля, затем перемешивает карты.
 func deadend_reset_field(field_id: String) -> bool:
 	if not GameSession.allow_deadend_reset:
 		return false
