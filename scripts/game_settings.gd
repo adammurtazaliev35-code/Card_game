@@ -113,6 +113,7 @@ static var voice_input_threshold := 0.01
 ## GD-Sync: 0 = очень высокое качество, 3 = низкое.
 static var voice_quality := 2
 static var voice_ptt_keycode: int = KEY_V
+static var show_game_action_hud := false
 static var _loaded := false
 static var _windowed_rect_saved := false
 static var _saved_window_size := Vector2i.ZERO
@@ -124,6 +125,7 @@ static func ensure_loaded() -> void:
 	if _loaded:
 		return
 	_loaded = true
+	show_game_action_hud = OS.has_feature("mobile")
 	var cfg := ConfigFile.new()
 	var has_saved_display_mode := false
 	if cfg.load(PATH) == OK:
@@ -136,6 +138,7 @@ static func ensure_loaded() -> void:
 		voice_input_threshold = clampf(float(cfg.get_value("voice", "input_threshold", voice_input_threshold)), 0.001, 0.1)
 		voice_quality = clampi(int(cfg.get_value("voice", "quality", voice_quality)), 0, 3)
 		voice_ptt_keycode = int(cfg.get_value("voice", "ptt_keycode", voice_ptt_keycode))
+		show_game_action_hud = bool(cfg.get_value("ui", "camera_action_hud", show_game_action_hud))
 		if cfg.has_section_key("display", "mode"):
 			display_mode = _normalize_display_mode(str(cfg.get_value("display", "mode", DISPLAY_MODE_WINDOWED)))
 			has_saved_display_mode = true
@@ -165,6 +168,7 @@ static func save() -> void:
 	cfg.set_value("voice", "input_threshold", voice_input_threshold)
 	cfg.set_value("voice", "quality", voice_quality)
 	cfg.set_value("voice", "ptt_keycode", voice_ptt_keycode)
+	cfg.set_value("ui", "camera_action_hud", show_game_action_hud)
 	var err := cfg.save(PATH)
 	if err != OK:
 		push_warning("GameSettings: не удалось сохранить настройки (%d)." % err)

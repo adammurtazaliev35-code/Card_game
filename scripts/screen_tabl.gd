@@ -108,6 +108,10 @@ var ring_ui: Dictionary = {}
 var ring_tableau_slots: Array[Dictionary] = []
 var player_one_ui: Dictionary = {}
 var player_two_ui: Dictionary = {}
+var camera_action_hud_layer: CanvasLayer
+var camera_action_hud_root: Control
+var camera_action_hud_p1: Dictionary = {}
+var camera_action_hud_p2: Dictionary = {}
 var display_mode: DisplayMode = DisplayMode.CLASSIC
 
 var player_one_stock: Pile = null
@@ -154,6 +158,7 @@ func _ready() -> void:
 	_setup_screen_touch()
 	_setup_undo_buttons()
 	_connect_player_action_buttons()
+	_setup_camera_action_hud()
 	for ui in [player_one_ui, player_two_ui]:
 		if ui.is_empty():
 			continue
@@ -782,14 +787,14 @@ func _on_player_reset(ui: Dictionary) -> void:
 
 
 func _refresh_player_actions() -> void:
-	if game_manager == null:
-		return
-	for ui in [player_one_ui, player_two_ui]:
-		if ui.is_empty():
-			continue
-		_update_player_action_set(ui, ui.get("actions", {}))
-	if not ring_ui.is_empty():
-		_update_player_action_set(player_one_ui, ring_ui.get("actions", {}))
+	if game_manager != null:
+		for ui in [player_one_ui, player_two_ui]:
+			if ui.is_empty():
+				continue
+			_update_player_action_set(ui, ui.get("actions", {}))
+		if not ring_ui.is_empty():
+			_update_player_action_set(player_one_ui, ring_ui.get("actions", {}))
+	_refresh_camera_action_hud()
 
 
 func _update_player_action_set(ui: Dictionary, actions: Dictionary) -> void:
@@ -814,6 +819,149 @@ func _update_player_action_set(ui: Dictionary, actions: Dictionary) -> void:
 	var can_reset := supports_reset and GameSession.allow_deadend_reset and local_field and (is_dead_end or history_count >= normal_cost)
 	reset.disabled = busy or not can_reset
 	reset.text = "ТУПИК" if is_dead_end else "СБРОС %d" % normal_cost
+
+
+func _setup_camera_action_hud() -> void:
+	GameSettings.ensure_loaded()
+	camera_action_hud_layer = CanvasLayer.new()
+	camera_action_hud_layer.name = "CameraActionHUD"
+	camera_action_hud_layer.layer = 20
+	add_child(camera_action_hud_layer)
+
+	camera_action_hud_root = Control.new()
+	camera_action_hud_root.name = "CameraActionHUDRoot"
+	camera_action_hud_root.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	camera_action_hud_root.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	camera_action_hud_root.theme = _make_screen_theme()
+	camera_action_hud_layer.add_child(camera_action_hud_root)
+
+	var bottom_row := HBoxContainer.new()
+	bottom_row.name = "PlayerActionButtons"
+	bottom_row.anchor_left = 0.0
+	bottom_row.anchor_right = 1.0
+	bottom_row.anchor_top = 1.0
+	bottom_row.anchor_bottom = 1.0
+	bottom_row.offset_left = 14.0
+	bottom_row.offset_right = -14.0
+	bottom_row.offset_top = -78.0
+	bottom_row.offset_bottom = -12.0
+	bottom_row.add_theme_constant_override("separation", 12)
+	camera_action_hud_root.add_child(bottom_row)
+
+	camera_action_hud_p1 = _create_camera_action_hud_player(bottom_row, 1)
+	camera_action_hud_p2 = _create_camera_action_hud_player(bottom_row, 2)
+	(camera_action_hud_p1["hint"] as Button).pressed.connect(_on_player_hint.bind(player_one_ui))
+	(camera_action_hud_p1["reset"] as Button).pressed.connect(_on_camera_action_hud_reset.bind(player_one_ui))
+	(camera_action_hud_p2["hint"] as Button).pressed.connect(_on_player_hint.bind(player_two_ui))
+	(camera_action_hud_p2["reset"] as Button).pressed.connect(_on_camera_action_hud_reset.bind(player_two_ui))
+	_refresh_camera_action_hud()
+
+
+func _create_camera_action_hud_player(parent: HBoxContainer, slot: int) -> Dictionary:
+	var panel := PanelContainer.new()
+	panel.name = "Player%dActionHUD" % slot
+	panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	var panel_style := StyleBoxFlat.new()
+	panel_style.bg_color = Color(0.035, 0.055, 0.075, 0.82)
+	panel_style.border_color = Color("#86E8CF")
+	panel_style.set_border_width_all(1)
+	panel_style.set_corner_radius_all(12)
+	panel_style.content_margin_left = 8
+	panel_style.content_margin_right = 8
+	panel_style.content_margin_top = 5
+	panel_style.content_margin_bottom = 5
+	panel.add_theme_stylebox_override("panel", panel_style)
+	parent.add_child(panel)
+
+	var row := HBoxContainer.new()
+	row.alignment = BoxContainer.ALIGNMENT_CENTER if slot == 1 else BoxContainer.ALIGNMENT_END
+	row.add_theme_constant_override("separation", 8)
+	panel.add_child(row)
+
+	var hint := _create_camera_action_button("ПОДСКАЗКА")
+	var reset := _create_camera_action_button("СБРОС")
+	row.add_child(hint)
+	row.add_child(reset)
+	return {"root": panel, "hint": hint, "reset": reset}
+
+
+func _create_camera_action_button(caption: String) -> Button:
+	var button := Button.new()
+	button.text = caption
+	button.custom_minimum_size = Vector2(142, 54)
+	button.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	button.add_theme_font_size_override("font_size", 18)
+	var normal := StyleBoxFlat.new()
+	normal.bg_color = Color("#183A3C")
+	normal.border_color = Color("#86E8CF")
+	normal.set_border_width_all(2)
+	normal.set_corner_radius_all(10)
+	normal.content_margin_left = 8
+	normal.content_margin_right = 8
+	normal.content_margin_top = 6
+	normal.content_margin_bottom = 6
+	var hover := normal.duplicate() as StyleBoxFlat
+	hover.bg_color = Color("#24565A")
+	var pressed := normal.duplicate() as StyleBoxFlat
+	pressed.bg_color = Color("#102A2D")
+	button.add_theme_stylebox_override("normal", normal)
+	button.add_theme_stylebox_override("hover", hover)
+	button.add_theme_stylebox_override("pressed", pressed)
+	button.add_theme_color_override("font_color", Color("#F2F7F5"))
+	return button
+
+
+func refresh_camera_action_hud() -> void:
+	if not is_instance_valid(camera_action_hud_root):
+		return
+	var enabled := GameSettings.show_game_action_hud and game_manager != null
+	camera_action_hud_root.visible = enabled
+	if not enabled:
+		return
+
+	var is_multiplayer_layout := display_mode == DisplayMode.MULTIPLAYER
+	var show_p1 := not is_multiplayer_layout or not network_session_active or local_player_slot == 1
+	var show_p2 := is_multiplayer_layout and (not network_session_active or local_player_slot == 2)
+	(camera_action_hud_p1["root"] as Control).visible = show_p1
+	(camera_action_hud_p2["root"] as Control).visible = show_p2
+	if game_manager == null:
+		for hud in [camera_action_hud_p1, camera_action_hud_p2]:
+			(hud["hint"] as Button).disabled = true
+			(hud["reset"] as Button).disabled = true
+		return
+
+	for slot in [1, 2]:
+		var hud: Dictionary = camera_action_hud_p1 if slot == 1 else camera_action_hud_p2
+		var player_ui: Dictionary = player_one_ui if slot == 1 else player_two_ui
+		var field_id := _player_field_id(player_ui)
+		var local_field := not field_id.is_empty() and _is_local_field(field_id)
+		var busy := game_manager.is_dealing or game_manager.game_finished
+		var can_hint := game_manager.rules is KlondikeRules or game_manager.rules is SpiderRules
+		var hint := hud["hint"] as Button
+		hint.disabled = busy or not local_field or not can_hint or game_manager.hint_charges <= 0
+
+		var history_count := game_manager.get_field_history_count(field_id) if local_field else 0
+		var normal_cost := game_manager.get_normal_reset_cost(field_id) if local_field else 10
+		var supports_reset := game_manager.rules is KlondikeRules or game_manager.rules is SpiderRules
+		# HUD-кнопка запускает только обычный сброс. Тупиковый сброс остаётся
+		# отдельным действием на физическом табло и не подменяет эту кнопку.
+		var can_normal_reset := supports_reset and GameSession.allow_deadend_reset and local_field and history_count >= normal_cost
+		var reset := hud["reset"] as Button
+		reset.disabled = busy or not can_normal_reset
+		reset.text = "СБРОС %d" % normal_cost
+
+
+func _on_camera_action_hud_reset(ui: Dictionary) -> void:
+	if game_manager == null or not GameSession.allow_deadend_reset:
+		return
+	if not (game_manager.rules is KlondikeRules or game_manager.rules is SpiderRules):
+		return
+	var field_id := _player_field_id(ui)
+	if field_id.is_empty() or not _is_local_field(field_id):
+		return
+	game_manager.normal_reset_field(field_id)
+	_refresh_additional_screens()
+	_refresh_player_actions()
 
 
 func _setup_viewport() -> void:
@@ -2489,6 +2637,7 @@ func _update_player_one() -> void:
 	_highlight_own_panel()
 	_update_time_label()
 	_refresh_player_actions()
+	refresh_camera_action_hud()
 
 
 ## Своё поле в сети — яркая рамка цвета игрока; у соперника — его цвет, приглушённо.
