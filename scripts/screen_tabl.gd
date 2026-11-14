@@ -2853,6 +2853,8 @@ func _setup_screen_material() -> void:
 	screen_material.shader = SCREEN_SHADER
 	screen_material.set_shader_parameter("screen_texture", screen_viewport.get_texture())
 	screen_material.set_shader_parameter("emission_energy", emission_energy)
+	# Совместимо с основным экранным шейдером с rotation_mode.
+	screen_material.set_shader_parameter("rotation_mode", 1 if rotate_clockwise else 0)
 	screen_material.set_shader_parameter("rotate_clockwise", rotate_clockwise)
 
 	var applied := 0
