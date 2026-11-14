@@ -739,9 +739,8 @@ func _on_additional_hint(slot: int) -> void:
 	var field_id := _get_additional_field_id(slot)
 	if game_manager == null or field_id.is_empty():
 		return
-	var hint_entries := game_manager.request_hint(field_id)
-	if hint_entries.is_empty():
-		_set_additional_hint_output(slot, "Подсказка не найдена для текущего состояния.")
+	# Пустой результат не выводит текст на табло и не оставляет ложную подсказку.
+	game_manager.request_hint(field_id)
 	_refresh_additional_screens()
 
 
@@ -2856,7 +2855,6 @@ func _setup_screen_material() -> void:
 	screen_material.set_shader_parameter("emission_energy", emission_energy)
 	# Сохраняем ориентацию основного экрана из shader default (mode 3).
 	screen_material.set_shader_parameter("rotation_mode", 3 if rotate_clockwise else 0)
-	screen_material.set_shader_parameter("rotate_clockwise", rotate_clockwise)
 
 	var applied := 0
 	for mesh_instance in models:
