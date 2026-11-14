@@ -666,17 +666,22 @@ func _refresh_additional_screen_entry(slot: int, ui: Dictionary) -> void:
 
 	var verdict_info: Dictionary = game_manager.field_verdicts.get(field_id, {})
 	var verdict := int(verdict_info.get("verdict", -1))
-	match verdict:
-		KlondikePredictor.Verdict.PROGRESS:
-			status.text = "ХОД ВОЗМОЖЕН"
-		KlondikePredictor.Verdict.STUCK_RECOVERABLE:
-			status.text = "НУЖНА ОТМЕНА"
-		KlondikePredictor.Verdict.DEAD_END:
-			status.text = "ТУПИК"
-		KlondikePredictor.Verdict.WON:
-			status.text = "ПОЛЕ СОБРАНО"
-		_:
-			status.text = "АНАЛИЗИРУЕМ…"
+	if game_manager.game_finished:
+		status.text = "ПАРТИЯ ЗАВЕРШЕНА"
+	elif game_manager.rules is SpiderRules:
+		status.text = "ПАУК · ИГРА ИДЁТ"
+	else:
+		match verdict:
+			KlondikePredictor.Verdict.PROGRESS:
+				status.text = "ХОД ВОЗМОЖЕН"
+			KlondikePredictor.Verdict.STUCK_RECOVERABLE:
+				status.text = "НУЖНА ОТМЕНА"
+			KlondikePredictor.Verdict.DEAD_END:
+				status.text = "ТУПИК"
+			KlondikePredictor.Verdict.WON:
+				status.text = "ПОЛЕ СОБРАНО"
+			_:
+				status.text = "АНАЛИЗИРУЕМ…"
 
 	var field_moves := game_manager.get_field_history_count(field_id)
 	var normal_cost := game_manager.get_normal_reset_cost(field_id)
