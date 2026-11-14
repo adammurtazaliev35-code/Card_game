@@ -82,7 +82,12 @@ func _show_hint(entries: Array) -> void:
 	var is_recycle := first.has("recycle") or move.has("recycle")
 	var card_source := source
 	if is_draw:
-		target = _find_field_pile(source, PileMarker.Kind.WASTE)
+		# Клондайк отправляет карту в Waste, а Паук раздаёт по карте
+		# во все колонки — показываем полёт к первой колонке этого поля.
+		var target_kind := PileMarker.Kind.WASTE
+		if game_manager.rules is SpiderRules and source.kind == PileMarker.Kind.STOCK:
+			target_kind = PileMarker.Kind.TABLEAU
+		target = _find_field_pile(source, target_kind)
 	elif is_recycle:
 		card_source = _find_field_pile(source, PileMarker.Kind.WASTE)
 		target = source
