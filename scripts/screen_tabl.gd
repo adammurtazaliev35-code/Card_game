@@ -942,8 +942,6 @@ func refresh_camera_action_hud() -> void:
 
 		var history_count := game_manager.get_field_history_count(field_id) if local_field else 0
 		var normal_cost := game_manager.get_normal_reset_cost(field_id) if local_field else 10
-		var info: Dictionary = game_manager.field_verdicts.get(field_id, {}) if local_field else {}
-		var is_dead_end := int(info.get("verdict", -1)) == KlondikePredictor.Verdict.DEAD_END
 		var supports_reset := game_manager.rules is KlondikeRules or game_manager.rules is SpiderRules
 		# HUD-кнопка запускает только обычный сброс. Тупиковый сброс остаётся
 		# отдельным действием на физическом табло и не подменяет эту кнопку.
