@@ -1368,6 +1368,7 @@ var _screen_mdt: MeshDataTool
 
 # Pointer -> {"screen": "main"|"additional", "pixel": Vector2}
 var _screen_pointer_routes: Dictionary = {}
+var _screen_hover_route: Dictionary = {}
 
 const SCREEN_CLICK_LAYER := 1 << 19
 const ADDITIONAL_SCREEN_CLICK_LAYER := 1 << 20
@@ -1436,6 +1437,10 @@ func _screen_mesh_supports_surface(mesh_instance: MeshInstance3D, surface_index:
 
 
 func _unhandled_input(event: InputEvent) -> void:
+	if event is InputEventMouseMotion:
+		_forward_mouse_motion_to_screen(event as InputEventMouseMotion)
+		return
+
 	var pointer_key := ""
 	var pointer_position := Vector2.ZERO
 	var is_pressed := false
@@ -1494,11 +1499,60 @@ func _unhandled_input(event: InputEvent) -> void:
 	_screen_pointer_routes.erase(pointer_key)
 	get_viewport().set_input_as_handled()
 
+func _forward_mouse_motion_to_screen(event: InputEventMouseMotion) -> void:
+	var next_route: Dictionary = {}
+	var next_pixel := Vector2(-100.0, -100.0)
+
+	# AdditionalScreen имеет приоритет, если луч попал в его физическую поверхность.
+	var additional_hit: Variant = _additional_screen_pixel_under_mouse(event.position)
+	if additional_hit != null:
+		var slot := int(additional_hit["slot"])
+		if _additional_viewport_for_slot(slot) != null:
+			next_route = {"screen": "additional", "slot": slot}
+			next_pixel = additional_hit["pixel"]
+	elif _any_deadend_visible():
+		var main_pixel: Variant = _screen_pixel_under_mouse(event.position)
+		if main_pixel != null and screen_viewport != null:
+			next_route = {"screen": "main"}
+			next_pixel = main_pixel
+
+	var route_changed := _screen_hover_route != next_route
+	if route_changed and not _screen_hover_route.is_empty():
+		# Отправляем старому viewport движение за пределы его UI, чтобы Control
+		# гарантированно получил mouse_exited при уходе курсора с физического экрана.
+		_forward_input_to_viewport(
+			event,
+			Vector2(-100.0, -100.0),
+			_viewport_for_screen_route(_screen_hover_route)
+		)
+
+	if not next_route.is_empty():
+		_forward_input_to_viewport(event, next_pixel, _viewport_for_screen_route(next_route))
+		_screen_hover_route = next_route
+	else:
+		_screen_hover_route.clear()
+
+	if route_changed or not _screen_hover_route.is_empty():
+		get_viewport().set_input_as_handled()
+
+
+func _viewport_for_screen_route(route: Dictionary) -> SubViewport:
+	if route.is_empty():
+		return null
+	if str(route.get("screen", "")) == "main":
+		return screen_viewport
+	return _additional_viewport_for_slot(int(route.get("slot", 1)))
+
+
 func _forward_input_to_viewport(event: InputEvent, pixel: Vector2, target_viewport: SubViewport) -> void:
-	if target_viewport == null:
+	if target_viewport == null or not is_instance_valid(target_viewport):
 		return
 	var forwarded := event.duplicate()
-	if forwarded is InputEventMouseButton:
+	if forwarded is InputEventMouseMotion:
+		var mouse_motion := forwarded as InputEventMouseMotion
+		mouse_motion.position = pixel
+		mouse_motion.global_position = pixel
+	elif forwarded is InputEventMouseButton:
 		var mouse_button := forwarded as InputEventMouseButton
 		mouse_button.position = pixel
 		mouse_button.global_position = pixel
