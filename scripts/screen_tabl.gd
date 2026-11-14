@@ -211,12 +211,16 @@ func request_create_lobby() -> void:
 # DISPLAY TRANSFORM
 # ==================================================
 func _apply_display_transform() -> void:
-	var single_board_layout := (
-		display_mode == DisplayMode.CLASSIC
-		or display_mode == DisplayMode.RING
+	# Второе физическое табло нужно только в настоящем сетевом матче.
+	# Отражённая раскладка в одиночной игре остаётся одним экранным комплектом.
+	var network_dual_screen := (
+		display_mode == DisplayMode.MULTIPLAYER
+		and network_session_active
 	)
+	var single_board_layout := not network_dual_screen
 
 	if is_instance_valid(screen_rig):
+		screen_rig.visible = true
 		if single_board_layout:
 			screen_rig.position = single_board_position
 			screen_rig.rotation_degrees = single_board_rotation_degrees
@@ -225,12 +229,33 @@ func _apply_display_transform() -> void:
 			screen_rig.rotation_degrees = default_screen_rotation
 
 	if is_instance_valid(screen_rig_2):
+		screen_rig_2.visible = network_dual_screen
 		if single_board_layout:
 			screen_rig_2.position = second_board_hidden_position
 			screen_rig_2.rotation_degrees = second_board_hidden_rotation_degrees
 		elif screen_default_saved_2:
 			screen_rig_2.position = default_screen_position_2
 			screen_rig_2.rotation_degrees = default_screen_rotation_2
+
+	_apply_additional_screen_visibility(network_dual_screen)
+
+
+func _apply_additional_screen_visibility(network_dual_screen: bool) -> void:
+	for entry in additional_screen_entries:
+		var slot := int(entry.get("slot", 1))
+		var show_screen := slot == 1 or network_dual_screen
+
+		var model := entry.get("model") as MeshInstance3D
+		if is_instance_valid(model):
+			model.visible = show_screen
+
+		var viewport := entry.get("viewport") as SubViewport
+		if is_instance_valid(viewport):
+			viewport.render_target_update_mode = (
+				SubViewport.UPDATE_ALWAYS
+				if show_screen
+				else SubViewport.UPDATE_DISABLED
+			)
 
 func _setup_undo_buttons() -> void:
 	undo_buttons_p1.clear()
@@ -506,10 +531,13 @@ func _setup_additional_screen_material() -> void:
 		material.shader = SCREEN_SHADER
 		material.set_shader_parameter("screen_texture", viewport.get_texture())
 		material.set_shader_parameter("emission_energy", additional_emission_energy)
-		# Portrait viewports must not inherit the landscape 90-degree rotation.
-		var rotate_for_viewport := additional_rotate_clockwise and viewport.size.x > viewport.size.y
-		material.set_shader_parameter("rotate_clockwise", rotate_for_viewport)
-		material.set_shader_parameter("rotation_mode", 3 if rotate_for_viewport else 0)
+		# Дополнительный экран физически установлен вертикально.
+		# Поворот задаётся явно, независимо от соотношения сторон SubViewport.
+		material.set_shader_parameter("rotate_clockwise", additional_rotate_clockwise)
+		material.set_shader_parameter(
+			"rotation_mode",
+			3 if additional_rotate_clockwise else 0
+		)
 		entry["material"] = material
 
 		if not _screen_mesh_supports_surface(mesh_instance, additional_screen_surface_index):
@@ -2324,11 +2352,9 @@ func _update_player_one() -> void:
 
 	var is_klondike := game_manager.current_mode == GameManager.GameMode.KLONDIKE
 
-	# В зеркальном режиме второе поле показывается и в Клондайке, и в Пауке.
-	var show_second_panel := (
-		display_mode == DisplayMode.MIRRORED
-		or display_mode == DisplayMode.MULTIPLAYER
-	)
+	# Второе табло и панель второго игрока используются только в сетевой партии.
+	# Одиночная отражённая раскладка не должна выглядеть как матч двух игроков.
+	var show_second_panel := display_mode == DisplayMode.MULTIPLAYER
 	player_two_ui["panel"].visible = show_second_panel
 	player_one_ui["panel"].size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	player_two_ui["panel"].size_flags_horizontal = Control.SIZE_EXPAND_FILL
