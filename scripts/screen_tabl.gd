@@ -828,14 +828,18 @@ func _update_camera_action_group(ui: Dictionary, actions: Dictionary) -> void:
 	var local_field := not field_id.is_empty() and _is_local_field(field_id)
 	var busy := game_manager == null or game_manager.is_dealing or game_manager.game_finished
 	var can_hint := game_manager != null and (game_manager.rules is KlondikeRules or game_manager.rules is SpiderRules)
-	(actions["hint"] as Button).disabled = busy or not local_field or not can_hint or game_manager.hint_charges <= 0
+	var hint_button := actions["hint"] as Button
+	hint_button.disabled = busy or not local_field or not can_hint or game_manager.hint_charges <= 0
+	hint_button.text = "ПОДСКАЗКА %d" % game_manager.hint_charges if game_manager != null else "ПОДСКАЗКА"
 	var history_count := game_manager.get_field_history_count(field_id) if game_manager != null and local_field else 0
 	var normal_cost := game_manager.get_normal_reset_cost(field_id) if game_manager != null and local_field else 10
 	var info: Dictionary = game_manager.field_verdicts.get(field_id, {}) if game_manager != null and local_field else {}
 	var is_dead_end := int(info.get("verdict", -1)) == KlondikePredictor.Verdict.DEAD_END
 	var supports_reset := game_manager != null and (game_manager.rules is KlondikeRules or game_manager.rules is SpiderRules)
 	var can_reset := supports_reset and GameSession.allow_deadend_reset and local_field and (is_dead_end or history_count >= normal_cost)
-	(actions["reset"] as Button).disabled = busy or not can_reset
+	var reset_button := actions["reset"] as Button
+	reset_button.disabled = busy or not can_reset
+	reset_button.text = "ТУПИК" if is_dead_end else "СБРОС %d" % normal_cost
 
 
 func _connect_player_action_buttons() -> void:
