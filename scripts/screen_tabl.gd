@@ -468,9 +468,8 @@ func _setup_additional_viewports() -> void:
 
 func _build_additional_screen_ui(viewport: SubViewport, slot: int) -> Dictionary:
 	var previous_scale := ui_scale
-	# Экран физически портретный, но текстура разворачивается шейдером на 90°.
-	# Поэтому верстаем в 1024x512 и используем более крупную типографику.
 	ui_scale = maxf(1.2, minf(float(viewport.size.x) / 1024.0, float(viewport.size.y) / 512.0))
+
 	var root := Control.new()
 	root.name = "AdditionalScreenUI_P%d" % slot
 	root.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
@@ -487,36 +486,59 @@ func _build_additional_screen_ui(viewport: SubViewport, slot: int) -> Dictionary
 	var margin := MarginContainer.new()
 	margin.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	for side in ["left", "right", "top", "bottom"]:
-		margin.add_theme_constant_override("margin_" + side, _si(26))
+		margin.add_theme_constant_override("margin_" + side, _si(22))
 	root.add_child(margin)
 
 	var column := VBoxContainer.new()
-	column.add_theme_constant_override("separation", _si(8))
+	column.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	column.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	column.add_theme_constant_override("separation", _si(6))
 	margin.add_child(column)
 
-	var title := _make_label("ТАБЛО ПОЛЯ %d" % slot, 34, Color("#F2C35B"))
+	var title := _make_label("СТАТИСТИКА · ИГРОК %d" % slot, 32, Color("#F2C35B"))
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	column.add_child(title)
 
-	var status := _make_label("ОЖИДАНИЕ АНАЛИЗА", 25, Color("#86E8CF"))
+	var status := _make_label("ОЖИДАНИЕ АНАЛИЗА", 22, Color("#86E8CF"))
 	status.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	column.add_child(status)
 
 	var first_row := HBoxContainer.new()
 	first_row.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	first_row.add_theme_constant_override("separation", _si(12))
+	first_row.add_theme_constant_override("separation", _si(10))
 	column.add_child(first_row)
-	var normal_left := _create_additional_metric(first_row, "ХОДОВ ДО ОБЫЧНОГО СБРОСА", "—", Color("#86E8CF"))
-	var normal_undo := _create_additional_metric(first_row, "ОТКАТ ОБЫЧНОГО СБРОСА", "—", Color("#F2C35B"))
+	var normal_resets := _create_additional_metric(first_row, "ОБЫЧНЫХ СБРОСОВ", "0", Color("#86E8CF"))
+	var deadend_resets := _create_additional_metric(first_row, "ТУПИКОВЫХ СБРОСОВ", "0", Color("#FF9A78"))
 
 	var second_row := HBoxContainer.new()
 	second_row.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	second_row.add_theme_constant_override("separation", _si(12))
+	second_row.add_theme_constant_override("separation", _si(10))
 	column.add_child(second_row)
-	var deadend_undo := _create_additional_metric(second_row, "ОТКАТ ТУПИКОВОГО СБРОСА", "—", Color("#FF9A78"))
-	var hints_remaining := _create_additional_metric(second_row, "ПОДСКАЗОК ОСТАЛОСЬ", "—", Color("#C6A9EE"))
+	var normal_left := _create_additional_metric(second_row, "ХОДОВ ДО СЛЕДУЮЩЕГО СБРОСА", "—", Color("#86E8CF"))
+	var normal_rollback := _create_additional_metric(second_row, "ОТКАТ ОБЫЧНОГО СБРОСА · ПОСЛЕДНИЕ N ХОДОВ", "—", Color("#F2C35B"))
 
-	var footer := _make_label("ХОДЫ 0  ·  ОТМЕНЫ ИСП. 0  ·  ОТМЕН ОСТАЛОСЬ 0  ·  ПОДСКАЗОК ИСП. 0", 18, Color("#D5DFEA"))
+	var third_row := HBoxContainer.new()
+	third_row.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	third_row.add_theme_constant_override("separation", _si(10))
+	column.add_child(third_row)
+	var deadend_rollback := _create_additional_metric(third_row, "ОТКАТ ТУПИКОВОГО СБРОСА", "—", Color("#FF9A78"))
+	var hints_remaining := _create_additional_metric(third_row, "ПОДСКАЗОК ОСТАЛОСЬ", "—", Color("#C6A9EE"))
+
+	var actions_row := HBoxContainer.new()
+	actions_row.alignment = BoxContainer.ALIGNMENT_CENTER
+	actions_row.add_theme_constant_override("separation", _si(14))
+	column.add_child(actions_row)
+	var hint_button := _make_screen_button("ПОДСКАЗКА", Color("#44366D"))
+	var reset_button := _make_screen_button("СБРОС", Color("#245A4A"))
+	for action_button in [hint_button, reset_button]:
+		action_button.custom_minimum_size = Vector2(_s(210), _s(48))
+		action_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		actions_row.add_child(action_button)
+
+	hint_button.pressed.connect(_on_additional_hint.bind(slot))
+	reset_button.pressed.connect(_on_additional_reset.bind(slot))
+
+	var footer := _make_label("ХОДЫ 0  ·  ОТМЕНЫ 0  ·  ПОДСКАЗОК ИСП. 0", 17, Color("#D5DFEA"))
 	footer.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	column.add_child(footer)
 
@@ -524,13 +546,16 @@ func _build_additional_screen_ui(viewport: SubViewport, slot: int) -> Dictionary
 	return {
 		"title": title,
 		"status": status,
+		"normal_resets": normal_resets,
+		"deadend_resets": deadend_resets,
 		"normal_left": normal_left,
-		"normal_undo": normal_undo,
-		"deadend_undo": deadend_undo,
+		"normal_rollback": normal_rollback,
+		"deadend_rollback": deadend_rollback,
 		"hints_remaining": hints_remaining,
+		"hint_button": hint_button,
+		"reset_button": reset_button,
 		"footer": footer
 	}
-
 
 func _create_additional_metric(parent: Control, caption_text: String, value_text: String, value_color: Color) -> Label:
 	var panel := PanelContainer.new()
@@ -665,13 +690,14 @@ func _refresh_additional_screen_entry(slot: int, ui: Dictionary) -> void:
 
 	var status: Label = ui["status"]
 	var field_id := _get_additional_field_id(slot)
+	var hint_button := ui["hint_button"] as Button
+	var reset_button := ui["reset_button"] as Button
 	if field_id.is_empty():
-		if network_session_active and slot != local_player_slot:
-			status.text = "ПОЛЕ СОПЕРНИКА"
-		else:
-			status.text = "ПОЛЕ НЕ НАЙДЕНО"
-		for key in ["normal_left", "normal_undo", "deadend_undo", "hints_remaining"]:
+		status.text = "ПОЛЕ НЕ НАЙДЕНО" if not network_session_active else "ПОЛЕ СОПЕРНИКА"
+		for key in ["normal_resets", "deadend_resets", "normal_left", "normal_rollback", "deadend_rollback", "hints_remaining"]:
 			(ui[key] as Label).text = "—"
+		hint_button.disabled = true
+		reset_button.disabled = true
 		(ui["footer"] as Label).text = "СТАТИСТИКА ПОЛЯ НЕДОСТУПНА"
 		return
 
@@ -680,7 +706,7 @@ func _refresh_additional_screen_entry(slot: int, ui: Dictionary) -> void:
 	if game_manager.game_finished:
 		status.text = "ПАРТИЯ ЗАВЕРШЕНА"
 	elif verdict == KlondikePredictor.Verdict.DEAD_END:
-		status.text = "ТУПИК"
+		status.text = "ТУПИК · ДОСТУПЕН ТУПИКОВЫЙ СБРОС"
 	elif verdict == KlondikePredictor.Verdict.WON:
 		status.text = "ПОЛЕ СОБРАНО"
 	elif game_manager.rules is SpiderRules:
@@ -694,23 +720,32 @@ func _refresh_additional_screen_entry(slot: int, ui: Dictionary) -> void:
 			_:
 				status.text = "АНАЛИЗИРУЕМ…"
 
-	var field_moves := game_manager.get_field_history_count(field_id)
-	var normal_cost := game_manager.get_normal_reset_cost(field_id)
-	var remaining := maxi(0, normal_cost - field_moves)
-	var deadend_undo := game_manager.get_deadend_reset_undo_count(field_id)
 	var supports_reset := game_manager.rules is KlondikeRules or game_manager.rules is SpiderRules
-	(ui["normal_left"] as Label).text = str(remaining) if supports_reset and GameSession.allow_deadend_reset else "ВЫКЛ"
-	(ui["normal_undo"] as Label).text = str(normal_cost) if supports_reset and GameSession.allow_deadend_reset else "—"
-	(ui["deadend_undo"] as Label).text = str(deadend_undo) if supports_reset and GameSession.allow_deadend_reset else "—"
-	(ui["hints_remaining"] as Label).text = str(game_manager.hint_charges)
+	var local_field := _is_local_field(field_id)
+	var busy := game_manager.is_dealing or game_manager.game_finished
 	var stats := game_manager.get_field_stats(field_id)
-	(ui["footer"] as Label).text = "ХОДЫ %d  ·  ОТМЕНЫ ИСП. %d  ·  ОТМЕН ОСТАЛОСЬ %d  ·  ПОДСКАЗОК ИСП. %d" % [
+	var history_count := game_manager.get_field_history_count(field_id)
+	var normal_cost := game_manager.get_normal_reset_cost(field_id)
+	var remaining := maxi(0, normal_cost - history_count)
+	var deadend_rollback := game_manager.get_deadend_reset_undo_count(field_id)
+
+	(ui["normal_resets"] as Label).text = str(stats["normal_resets"])
+	(ui["deadend_resets"] as Label).text = str(stats["deadend_resets"])
+	(ui["normal_left"] as Label).text = str(remaining) if supports_reset and GameSession.allow_deadend_reset else "ВЫКЛ"
+	(ui["normal_rollback"] as Label).text = str(normal_cost) if supports_reset and GameSession.allow_deadend_reset else "—"
+	(ui["deadend_rollback"] as Label).text = str(deadend_rollback) if supports_reset and GameSession.allow_deadend_reset else "—"
+	(ui["hints_remaining"] as Label).text = str(game_manager.hint_charges)
+	(ui["footer"] as Label).text = "ХОДЫ %d  ·  ОТМЕНЫ %d  ·  ПОДСКАЗОК ИСП. %d" % [
 		int(stats["moves"]),
 		int(stats["undos"]),
-		game_manager.undo_charges,
 		game_manager.hints_used
 	]
 
+	var can_hint := supports_reset and local_field and game_manager.hint_charges > 0
+	hint_button.disabled = busy or not can_hint
+	var can_normal_reset := supports_reset and GameSession.allow_deadend_reset and local_field and history_count >= normal_cost
+	reset_button.disabled = busy or not can_normal_reset
+	reset_button.tooltip_text = "Отменяет последние %d ходов, перемешивает поле и выполняет от 0 до %d случайных ходов." % [normal_cost, normal_cost]
 
 func _on_hints_changed(_charges: int, _used: int) -> void:
 	_refresh_additional_screens()
@@ -726,27 +761,11 @@ func _on_hint_ready(field_id: String, entries: Array) -> void:
 
 
 func _connect_player_action_buttons() -> void:
-	for ui in [player_one_ui, player_two_ui]:
-		if ui.is_empty():
-			continue
-		var actions: Dictionary = ui.get("actions", {})
-		if actions.is_empty():
-			continue
-		(actions["hint"] as Button).pressed.connect(_on_player_hint.bind(ui))
-		(actions["undo"] as Button).pressed.connect(_on_player_undo.bind(ui))
-		(actions["reset"] as Button).pressed.connect(_on_player_reset.bind(ui))
-
-	if not ring_ui.is_empty():
-		var ring_actions: Dictionary = ring_ui.get("actions", {})
-		if not ring_actions.is_empty():
-			(ring_actions["hint"] as Button).pressed.connect(_on_player_hint.bind(player_one_ui))
-			(ring_actions["undo"] as Button).pressed.connect(_on_player_undo.bind(player_one_ui))
-			(ring_actions["reset"] as Button).pressed.connect(_on_player_reset.bind(player_one_ui))
+	# Кнопки действий больше не размещаются на основном табло.
+	# Подсказка и обычный сброс находятся на дополнительных экранах.
 
 
 func _player_slot(ui: Dictionary) -> int:
-	# В Ring интерфейс один: одиночная игра всегда управляет полем 1,
-	# а в сети — полем локального слота.
 	if display_mode == DisplayMode.RING:
 		return local_player_slot if network_session_active else 1
 	return 2 if ui.get("panel") == player_two_ui.get("panel") else 1
@@ -760,66 +779,51 @@ func _on_player_hint(ui: Dictionary) -> void:
 	if game_manager == null:
 		return
 	var field_id := _player_field_id(ui)
-	if field_id.is_empty():
+	if field_id.is_empty() or not _is_local_field(field_id):
 		return
 	game_manager.request_hint(field_id)
 
 
-func _on_player_undo(ui: Dictionary) -> void:
-	_press_undo_slot(_player_slot(ui))
+func _on_additional_hint(slot: int) -> void:
+	if game_manager == null:
+		return
+	var field_id := _get_additional_field_id(slot)
+	if field_id.is_empty() or not _is_local_field(field_id):
+		return
+	game_manager.request_hint(field_id)
 
 
-func _on_player_reset(ui: Dictionary) -> void:
+func _on_additional_reset(slot: int) -> void:
 	if game_manager == null or not GameSession.allow_deadend_reset:
+		return
+	var field_id := _get_additional_field_id(slot)
+	if field_id.is_empty() or not _is_local_field(field_id):
 		return
 	if not (game_manager.rules is KlondikeRules or game_manager.rules is SpiderRules):
 		return
-	var field_id := _player_field_id(ui)
-	if field_id.is_empty():
+	# Кнопка на дополнительном табло дублирует обычный сброс,
+	# как и две кнопки HUD. Тупиковый сброс доступен отдельно в оверлее тупика.
+	game_manager.normal_reset_field(field_id)
+	_refresh_additional_screens()
+	_refresh_player_actions()
+
+
+func _on_camera_action_hud_reset(ui: Dictionary) -> void:
+	if game_manager == null or not GameSession.allow_deadend_reset:
 		return
-	var info: Dictionary = game_manager.field_verdicts.get(field_id, {})
-	if int(info.get("verdict", -1)) == KlondikePredictor.Verdict.DEAD_END:
-		game_manager.deadend_reset_field(field_id)
-	else:
-		game_manager.normal_reset_field(field_id)
+	var field_id := _player_field_id(ui)
+	if field_id.is_empty() or not _is_local_field(field_id):
+		return
+	if not (game_manager.rules is KlondikeRules or game_manager.rules is SpiderRules):
+		return
+	game_manager.normal_reset_field(field_id)
 	_refresh_additional_screens()
 	_refresh_player_actions()
 
 
 func _refresh_player_actions() -> void:
-	if game_manager != null:
-		for ui in [player_one_ui, player_two_ui]:
-			if ui.is_empty():
-				continue
-			_update_player_action_set(ui, ui.get("actions", {}))
-		if not ring_ui.is_empty():
-			_update_player_action_set(player_one_ui, ring_ui.get("actions", {}))
-	_refresh_camera_action_hud()
-
-
-func _update_player_action_set(ui: Dictionary, actions: Dictionary) -> void:
-	if actions.is_empty():
-		return
-	var field_id := _player_field_id(ui)
-	var local_field := not field_id.is_empty() and _is_local_field(field_id)
-	var busy := game_manager.is_dealing or game_manager.game_finished
-	var hint: Button = actions["hint"]
-	var undo: Button = actions["undo"]
-	var reset: Button = actions["reset"]
-	var can_hint := game_manager.rules is KlondikeRules or game_manager.rules is SpiderRules
-	hint.disabled = busy or not local_field or not can_hint or game_manager.hint_charges <= 0
-	hint.text = "ПОДСКАЗКА %d" % game_manager.hint_charges
-
-	var history_count := game_manager.get_field_history_count(field_id) if local_field else 0
-	undo.disabled = busy or not local_field or history_count <= 0 or game_manager.undo_charges <= 0
-	var normal_cost := game_manager.get_normal_reset_cost(field_id) if local_field else 10
-	var info: Dictionary = game_manager.field_verdicts.get(field_id, {}) if local_field else {}
-	var is_dead_end := int(info.get("verdict", -1)) == KlondikePredictor.Verdict.DEAD_END
-	var supports_reset := game_manager.rules is KlondikeRules or game_manager.rules is SpiderRules
-	var can_reset := supports_reset and GameSession.allow_deadend_reset and local_field and (is_dead_end or history_count >= normal_cost)
-	reset.disabled = busy or not can_reset
-	reset.text = "ТУПИК" if is_dead_end else "СБРОС %d" % normal_cost
-
+	_refresh_additional_screens()
+	refresh_camera_action_hud()
 
 func _setup_camera_action_hud() -> void:
 	GameSettings.ensure_loaded()
@@ -835,21 +839,23 @@ func _setup_camera_action_hud() -> void:
 	camera_action_hud_root.theme = _make_screen_theme()
 	camera_action_hud_layer.add_child(camera_action_hud_root)
 
-	var bottom_row := HBoxContainer.new()
-	bottom_row.name = "PlayerActionButtons"
-	bottom_row.anchor_left = 0.0
-	bottom_row.anchor_right = 1.0
-	bottom_row.anchor_top = 1.0
-	bottom_row.anchor_bottom = 1.0
-	bottom_row.offset_left = 14.0
-	bottom_row.offset_right = -14.0
-	bottom_row.offset_top = -78.0
-	bottom_row.offset_bottom = -12.0
-	bottom_row.add_theme_constant_override("separation", 12)
-	camera_action_hud_root.add_child(bottom_row)
+	# Кнопки закреплены в правом верхнем углу, имеют фиксированный размер
+	# и не зависят от размера нижней панели/соотношения сторон экрана.
+	var hud_column := VBoxContainer.new()
+	hud_column.name = "TopRightActionButtons"
+	hud_column.anchor_left = 1.0
+	hud_column.anchor_right = 1.0
+	hud_column.anchor_top = 0.0
+	hud_column.anchor_bottom = 0.0
+	hud_column.offset_left = -108.0
+	hud_column.offset_right = -12.0
+	hud_column.offset_top = 12.0
+	hud_column.offset_bottom = 116.0
+	hud_column.add_theme_constant_override("separation", 6)
+	camera_action_hud_root.add_child(hud_column)
 
-	camera_action_hud_p1 = _create_camera_action_hud_player(bottom_row, 1)
-	camera_action_hud_p2 = _create_camera_action_hud_player(bottom_row, 2)
+	camera_action_hud_p1 = _create_camera_action_hud_player(hud_column, 1)
+	camera_action_hud_p2 = _create_camera_action_hud_player(hud_column, 2)
 	(camera_action_hud_p1["hint"] as Button).pressed.connect(_on_player_hint.bind(player_one_ui))
 	(camera_action_hud_p1["reset"] as Button).pressed.connect(_on_camera_action_hud_reset.bind(player_one_ui))
 	(camera_action_hud_p2["hint"] as Button).pressed.connect(_on_player_hint.bind(player_two_ui))
@@ -857,57 +863,44 @@ func _setup_camera_action_hud() -> void:
 	_refresh_camera_action_hud()
 
 
-func _create_camera_action_hud_player(parent: HBoxContainer, slot: int) -> Dictionary:
-	var panel := PanelContainer.new()
-	panel.name = "Player%dActionHUD" % slot
-	panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	var panel_style := StyleBoxFlat.new()
-	panel_style.bg_color = Color(0.035, 0.055, 0.075, 0.82)
-	panel_style.border_color = Color("#86E8CF")
-	panel_style.set_border_width_all(1)
-	panel_style.set_corner_radius_all(12)
-	panel_style.content_margin_left = 8
-	panel_style.content_margin_right = 8
-	panel_style.content_margin_top = 5
-	panel_style.content_margin_bottom = 5
-	panel.add_theme_stylebox_override("panel", panel_style)
-	parent.add_child(panel)
-
+func _create_camera_action_hud_player(parent: VBoxContainer, slot: int) -> Dictionary:
 	var row := HBoxContainer.new()
-	row.alignment = BoxContainer.ALIGNMENT_CENTER if slot == 1 else BoxContainer.ALIGNMENT_END
-	row.add_theme_constant_override("separation", 8)
-	panel.add_child(row)
+	row.name = "Player%dActionHUD" % slot
+	row.alignment = BoxContainer.ALIGNMENT_END
+	row.add_theme_constant_override("separation", 6)
+	parent.add_child(row)
 
-	var hint := _create_camera_action_button("ПОДСКАЗКА")
-	var reset := _create_camera_action_button("СБРОС")
+	var hint := _create_camera_action_button("✦", "Подсказка")
+	var reset := _create_camera_action_button("↻", "Обычный сброс")
 	row.add_child(hint)
 	row.add_child(reset)
-	return {"root": panel, "hint": hint, "reset": reset}
+	return {"root": row, "hint": hint, "reset": reset}
 
 
-func _create_camera_action_button(caption: String) -> Button:
+func _create_camera_action_button(symbol: String, help_text: String) -> Button:
 	var button := Button.new()
-	button.text = caption
-	button.custom_minimum_size = Vector2(142, 54)
+	button.text = symbol
+	button.tooltip_text = help_text
+	button.custom_minimum_size = Vector2(42, 42)
 	button.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
-	button.add_theme_font_size_override("font_size", 18)
+	button.focus_mode = Control.FOCUS_NONE
+	button.add_theme_font_size_override("font_size", 23)
+
 	var normal := StyleBoxFlat.new()
-	normal.bg_color = Color("#183A3C")
-	normal.border_color = Color("#86E8CF")
-	normal.set_border_width_all(2)
-	normal.set_corner_radius_all(10)
-	normal.content_margin_left = 8
-	normal.content_margin_right = 8
-	normal.content_margin_top = 6
-	normal.content_margin_bottom = 6
+	normal.bg_color = Color(0.035, 0.065, 0.075, 0.58)
+	normal.border_color = Color(0.53, 0.91, 0.81, 0.58)
+	normal.set_border_width_all(1)
+	normal.set_corner_radius_all(21)
 	var hover := normal.duplicate() as StyleBoxFlat
-	hover.bg_color = Color("#24565A")
+	hover.bg_color = Color(0.10, 0.22, 0.23, 0.78)
 	var pressed := normal.duplicate() as StyleBoxFlat
-	pressed.bg_color = Color("#102A2D")
+	pressed.bg_color = Color(0.025, 0.045, 0.05, 0.82)
 	button.add_theme_stylebox_override("normal", normal)
 	button.add_theme_stylebox_override("hover", hover)
 	button.add_theme_stylebox_override("pressed", pressed)
+	button.add_theme_stylebox_override("disabled", normal.duplicate())
 	button.add_theme_color_override("font_color", Color("#F2F7F5"))
+	button.add_theme_color_override("font_disabled_color", Color(0.85, 0.9, 0.88, 0.42))
 	return button
 
 
@@ -919,16 +912,12 @@ func refresh_camera_action_hud() -> void:
 	if not enabled:
 		return
 
-	var is_multiplayer_layout := display_mode == DisplayMode.MULTIPLAYER
-	var show_p1 := not is_multiplayer_layout or not network_session_active or local_player_slot == 1
-	var show_p2 := is_multiplayer_layout and (not network_session_active or local_player_slot == 2)
+	var show_p1 := not network_session_active or local_player_slot == 1
+	var show_p2 := display_mode == DisplayMode.MULTIPLAYER and (
+		not network_session_active or local_player_slot == 2
+	)
 	(camera_action_hud_p1["root"] as Control).visible = show_p1
 	(camera_action_hud_p2["root"] as Control).visible = show_p2
-	if game_manager == null:
-		for hud in [camera_action_hud_p1, camera_action_hud_p2]:
-			(hud["hint"] as Button).disabled = true
-			(hud["reset"] as Button).disabled = true
-		return
 
 	for slot in [1, 2]:
 		var hud: Dictionary = camera_action_hud_p1 if slot == 1 else camera_action_hud_p2
@@ -943,26 +932,9 @@ func refresh_camera_action_hud() -> void:
 		var history_count := game_manager.get_field_history_count(field_id) if local_field else 0
 		var normal_cost := game_manager.get_normal_reset_cost(field_id) if local_field else 10
 		var supports_reset := game_manager.rules is KlondikeRules or game_manager.rules is SpiderRules
-		# HUD-кнопка запускает только обычный сброс. Тупиковый сброс остаётся
-		# отдельным действием на физическом табло и не подменяет эту кнопку.
 		var can_normal_reset := supports_reset and GameSession.allow_deadend_reset and local_field and history_count >= normal_cost
 		var reset := hud["reset"] as Button
 		reset.disabled = busy or not can_normal_reset
-		reset.text = "СБРОС %d" % normal_cost
-
-
-func _on_camera_action_hud_reset(ui: Dictionary) -> void:
-	if game_manager == null or not GameSession.allow_deadend_reset:
-		return
-	if not (game_manager.rules is KlondikeRules or game_manager.rules is SpiderRules):
-		return
-	var field_id := _player_field_id(ui)
-	if field_id.is_empty() or not _is_local_field(field_id):
-		return
-	game_manager.normal_reset_field(field_id)
-	_refresh_additional_screens()
-	_refresh_player_actions()
-
 
 func _setup_viewport() -> void:
 	ui_scale = minf(
@@ -1188,21 +1160,10 @@ func _create_player_panel(parent: HBoxContainer, player_title: String) -> Dictio
 		row.add_child(count_label)
 		foundation_count_labels.append(count_label)
 
-	var actions_row := HBoxContainer.new()
-	actions_row.add_theme_constant_override("separation", _si(6))
-	content.add_child(actions_row)
-	var hint_action := _make_screen_button("ПОДСКАЗКА", Color("#44366D"))
-	var undo_action := _make_screen_button("ОТМЕНА", Color("#334B68"))
-	var reset_action := _make_screen_button("СБРОС", Color("#245A4A"))
-	for action_button in [hint_action, undo_action, reset_action]:
-		action_button.custom_minimum_size = Vector2(_s(138), _s(48))
-		action_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		actions_row.add_child(action_button)
 
 	var deadend := _create_deadend_overlay(panel)
 
 	return {
-		"actions": {"hint": hint_action, "undo": undo_action, "reset": reset_action},
 		"deadend": deadend,
 		"panel": panel,
 		"title": title,
@@ -1724,18 +1685,6 @@ func _create_ring_ui(parent: Control) -> Dictionary:
 	header.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	ring_root.add_child(header)
 
-	var ring_actions_row := HBoxContainer.new()
-	ring_actions_row.position = Vector2(_s(500), _s(4))
-	ring_actions_row.size = Vector2(_s(510), _s(38))
-	ring_actions_row.add_theme_constant_override("separation", _si(8))
-	ring_root.add_child(ring_actions_row)
-	var ring_hint_action := _make_screen_button("ПОДСКАЗКА", Color("#44366D"))
-	var ring_undo_action := _make_screen_button("ОТМЕНА", Color("#334B68"))
-	var ring_reset_action := _make_screen_button("СБРОС", Color("#245A4A"))
-	for action_button in [ring_hint_action, ring_undo_action, ring_reset_action]:
-		action_button.custom_minimum_size = Vector2(_s(155), _s(44))
-		action_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		ring_actions_row.add_child(action_button)
 
 	# Верхняя левая панель: статистика и колоды. Она не занимает место игрового поля.
 	var stats_panel := _create_ring_panel(
@@ -1915,7 +1864,6 @@ func _create_ring_ui(parent: Control) -> Dictionary:
 		"root": ring_root,
 		"deadend": ring_deadend,
 		"header": header,
-		"actions": {"hint": ring_hint_action, "undo": ring_undo_action, "reset": ring_reset_action},
 		"score": score,
 		"moves": moves,
 		"time": time_label,
