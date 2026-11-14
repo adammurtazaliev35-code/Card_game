@@ -8,7 +8,7 @@ uniform float emission_energy = 0.6;
 // 1 — 90° по часовой
 // 2 — 180°
 // 3 — 90° против часовой
-uniform int rotation_mode : hint_range(0, 3) = 1;
+uniform int rotation_mode : hint_range(0, 3) = 3;
 
 void fragment() {
 	vec2 screen_uv = UV;
