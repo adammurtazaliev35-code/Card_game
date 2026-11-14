@@ -10,6 +10,7 @@ var show_camera_options := true
 var _music: HSlider
 var _sfx: HSlider
 var _look: CheckBox
+var _camera_action_buttons: CheckBox
 var _back: Button
 var _track_label: Label
 var _theme_status: Label
@@ -82,6 +83,19 @@ func _build_tabs() -> void:
 			GameSettings.save()
 		)
 		audio_page.add_child(_look)
+		_camera_action_buttons = CheckBox.new()
+		_camera_action_buttons.text = "Кнопки подсказки и сброса поверх игры"
+		_camera_action_buttons.button_pressed = GameSettings.show_camera_action_buttons
+		_camera_action_buttons.add_theme_font_size_override("font_size", 19)
+		_camera_action_buttons.add_theme_color_override("font_color", GameSettings.get_color("text"))
+		_camera_action_buttons.toggled.connect(func(on: bool):
+			GameSettings.show_camera_action_buttons = on
+			GameSettings.save()
+			for screens in get_tree().get_nodes_in_group("screens"):
+				if screens.has_method("refresh_camera_action_hud"):
+					screens.refresh_camera_action_hud()
+		)
+		audio_page.add_child(_camera_action_buttons)
 		var hint := _label("Колесо мыши: масштаб. СКМ или ПКМ: сдвиг. Home: сбросить вид.", 15, GameSettings.get_color("muted"))
 		hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		hint.custom_minimum_size = Vector2(480, 0)
@@ -240,6 +254,8 @@ func refresh() -> void:
 		_sfx.set_value_no_signal(GameSettings.sfx_volume)
 	if _look != null:
 		_look.set_pressed_no_signal(GameSettings.mouse_look)
+	if _camera_action_buttons != null:
+		_camera_action_buttons.set_pressed_no_signal(GameSettings.show_camera_action_buttons)
 	if _display_selector != null:
 		_display_selector.select(maxi(0, GameSettings.DISPLAY_MODES.find(GameSettings.display_mode)))
 	if _voice_volume != null:
