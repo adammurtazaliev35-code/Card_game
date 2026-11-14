@@ -102,6 +102,15 @@ var screen_material: ShaderMaterial
 var additional_screen_entries: Array[Dictionary] = []
 var screen_refresh_queued := false
 
+# Подсказка рисуется в 3D над картами/стопками и исчезает при первом действии с картой.
+var _hint_arrow_root: Node3D
+var _player_hud_layer: CanvasLayer
+var _player_hud_root: Control
+var _player_hint_button: Button
+var _player_normal_reset_button: Button
+var _player_deadend_reset_button: Button
+var _player_surrender_button: Button
+
 var ui_scale := 1.0
 var classic_ui_root: Control
 var ring_ui: Dictionary = {}
@@ -152,8 +161,8 @@ func _ready() -> void:
 	_setup_screen_material()
 	_setup_additional_screen_material()
 	_setup_screen_touch()
-	_setup_additional_screen_touch()
 	_setup_undo_buttons()
+	_setup_player_controls()
 	for ui in [player_one_ui, player_two_ui]:
 		var deadend: Dictionary = ui["deadend"]
 		(deadend["surrender"] as Button).pressed.connect(_on_deadend_surrender.bind(ui))
@@ -463,63 +472,67 @@ func _build_additional_screen_ui(viewport: SubViewport, slot: int) -> Dictionary
 	root.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	root.theme = _make_screen_theme()
 	viewport.add_child(root)
+
 	var background := ColorRect.new()
 	background.color = Color("#0D141D")
 	background.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	background.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	root.add_child(background)
+
 	var margin := MarginContainer.new()
 	margin.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	margin.add_theme_constant_override("margin_left", _si(28))
-	margin.add_theme_constant_override("margin_right", _si(28))
-	margin.add_theme_constant_override("margin_top", _si(22))
-	margin.add_theme_constant_override("margin_bottom", _si(18))
+	for side in ["left", "right", "top", "bottom"]:
+		margin.add_theme_constant_override("margin_" + side, _si(24))
 	root.add_child(margin)
+
 	var column := VBoxContainer.new()
 	column.add_theme_constant_override("separation", _si(12))
 	margin.add_child(column)
-	var title := _make_label("СОСТОЯНИЕ ПОЛЯ %d" % slot, 24, Color("#F2C35B"))
+
+	var title := _make_label("СТАТИСТИКА ПОЛЯ %d" % slot, 38, Color("#F2C35B"))
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	column.add_child(title)
-	var status := _make_label("ОЖИДАНИЕ АНАЛИЗА", 32, Color("#86E8CF"))
+
+	var status := _make_label("ОЖИДАНИЕ", 46, Color("#86E8CF"))
 	status.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	column.add_child(status)
-	var detail := _make_label("После раздачи здесь появится оценка текущей позиции.", 16, Color("#D5DFEA"))
-	detail.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	detail.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	detail.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	column.add_child(detail)
-	var hint_output := _make_label("Подсказка появится здесь.", 14, Color("#C6A9EE"))
-	hint_output.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	hint_output.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	column.add_child(hint_output)
-	var counter := _make_label("ОБЫЧНЫЕ СБРОСЫ: 0 · СЛЕДУЮЩИЙ: 10 ХОДОВ", 13, Color("#9AAEC4"))
-	counter.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	column.add_child(counter)
-	var buttons := GridContainer.new()
-	buttons.columns = 2
-	buttons.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
-	buttons.add_theme_constant_override("h_separation", _si(12))
-	buttons.add_theme_constant_override("v_separation", _si(8))
-	column.add_child(buttons)
-	var normal_reset := _make_screen_button("ОБЫЧНЫЙ СБРОС", Color("#245A4A"))
-	var deadend_reset := _make_screen_button("ТУПИКОВЫЙ СБРОС · 2", Color("#6E4B22"))
-	var hint_button := _make_screen_button("ПОДСКАЗКА", Color("#44366D"))
-	var surrender := _make_screen_button("СДАТЬСЯ", Color("#6E2A22"))
-	buttons.add_child(normal_reset)
-	buttons.add_child(deadend_reset)
-	buttons.add_child(hint_button)
-	buttons.add_child(surrender)
-	normal_reset.pressed.connect(_on_additional_normal_reset.bind(slot))
-	deadend_reset.pressed.connect(_on_additional_deadend_reset.bind(slot))
-	hint_button.pressed.connect(_on_additional_hint.bind(slot))
-	surrender.pressed.connect(_on_additional_surrender.bind(slot))
+
+	var metrics := GridContainer.new()
+	metrics.columns = 2
+	metrics.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	metrics.add_theme_constant_override("h_separation", _si(18))
+	metrics.add_theme_constant_override("v_separation", _si(12))
+	column.add_child(metrics)
+
+	var moves_to_reset := _make_label("ДО СБРОСА\n—", 34, Color("#F3E6C8"))
+	var normal_reset_undo := _make_label("ОБЫЧНЫЙ СБРОС\n—", 34, Color("#86E8CF"))
+	var deadend_reset_undo := _make_label("ТУПИКОВЫЙ СБРОС\n—", 34, Color("#F2C35B"))
+	var hints := _make_label("ПОДСКАЗКИ\n—", 34, Color("#C6A9EE"))
+	var undos := _make_label("ОТМЕНЫ\n—", 34, Color("#86E8CF"))
+	var reset_count := _make_label("СБРОСЫ\n—", 34, Color("#9AAEC4"))
+
+	for metric in [moves_to_reset, normal_reset_undo, deadend_reset_undo, hints, undos, reset_count]:
+		metric.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		metric.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+		metric.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		metric.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		metric.size_flags_vertical = Control.SIZE_EXPAND_FILL
+		metric.custom_minimum_size = Vector2(_s(360), _s(104))
+		metrics.add_child(metric)
+
 	ui_scale = previous_scale
 	return {
-		"title": title, "status": status, "detail": detail, "hint_output": hint_output,
-		"counter": counter, "normal_reset": normal_reset, "deadend_reset": deadend_reset,
-		"hint_button": hint_button, "surrender": surrender
+		"title": title,
+		"status": status,
+		"moves_to_reset": moves_to_reset,
+		"normal_reset_undo": normal_reset_undo,
+		"deadend_reset_undo": deadend_reset_undo,
+		"hints": hints,
+		"undos": undos,
+		"reset_count": reset_count
 	}
+
+
 
 
 func _setup_additional_screen_material() -> void:
@@ -533,7 +546,6 @@ func _setup_additional_screen_material() -> void:
 		material.set_shader_parameter("emission_energy", additional_emission_energy)
 		# Дополнительный экран физически установлен вертикально.
 		# Поворот задаётся явно, независимо от соотношения сторон SubViewport.
-		material.set_shader_parameter("rotate_clockwise", additional_rotate_clockwise)
 		material.set_shader_parameter(
 			"rotation_mode",
 			3 if additional_rotate_clockwise else 0
@@ -609,167 +621,327 @@ func _get_additional_field_id(slot: int) -> String:
 
 func _refresh_additional_screens() -> void:
 	if game_manager == null:
+		_refresh_player_controls()
 		return
 	for entry in additional_screen_entries:
 		var slot := int(entry.get("slot", 1))
 		var ui: Dictionary = entry.get("ui", {})
 		_refresh_additional_screen_entry(slot, ui)
+	_refresh_player_controls()
 
 
 func _refresh_additional_screen_entry(slot: int, ui: Dictionary) -> void:
 	if ui.is_empty() or game_manager == null:
 		return
+
 	var status: Label = ui["status"]
-	var detail: Label = ui["detail"]
-	var counter: Label = ui["counter"]
-	var normal_reset: Button = ui["normal_reset"]
-	var deadend_reset: Button = ui["deadend_reset"]
-	var hint_button: Button = ui["hint_button"]
-	var surrender: Button = ui["surrender"]
+	var metric_labels := [
+		ui["moves_to_reset"],
+		ui["normal_reset_undo"],
+		ui["deadend_reset_undo"],
+		ui["hints"],
+		ui["undos"],
+		ui["reset_count"]
+	]
+
 	if network_session_active and slot != local_player_slot:
 		status.text = "ПОЛЕ СОПЕРНИКА"
-		detail.text = "Это табло принадлежит сопернику. Действия доступны на его устройстве."
-		counter.text = ""
-		normal_reset.disabled = true
-		deadend_reset.visible = false
-		surrender.visible = false
-		hint_button.disabled = true
+		for label in metric_labels:
+			(label as Label).text = "—"
 		return
+
 	var field_id := _get_additional_field_id(slot)
 	if field_id.is_empty():
 		status.text = "ПОЛЕ НЕ НАЙДЕНО"
-		detail.text = "Не удалось определить поле игрока %d." % slot
-		normal_reset.visible = false
-		deadend_reset.visible = false
-		hint_button.visible = false
-		surrender.visible = false
+		for label in metric_labels:
+			(label as Label).text = "—"
 		return
-	normal_reset.visible = true
-	hint_button.visible = true
-	surrender.visible = true
-	if game_manager.game_finished:
-		status.text = "ПАРТИЯ ЗАВЕРШЕНА"
-		if not game_manager.surrendered_field.is_empty():
-			detail.text = "Ваше поле сдалось." if game_manager.surrendered_field == field_id else "Соперник сдался."
-		elif not game_manager.winner_field.is_empty():
-			detail.text = "Ваше поле победило." if game_manager.winner_field == field_id else "Соперник завершил своё поле первым."
-		else:
-			detail.text = "Партия завершена."
-		normal_reset.disabled = true
-		deadend_reset.visible = false
-		surrender.visible = false
-		hint_button.disabled = true
-		return
-	if not game_manager.rules is KlondikeRules:
-		status.text = "АНАЛИЗ НЕДОСТУПЕН"
-		detail.text = "Анализ ходов и сброс колоды доступны сейчас только для Клондайка."
-		counter.text = ""
-		normal_reset.visible = false
-		deadend_reset.visible = false
-		hint_button.visible = false
-		surrender.visible = false
-		return
-	var info: Dictionary = game_manager.field_verdicts.get(field_id, {})
-	var verdict := int(info.get("verdict", -1))
-	match verdict:
-		KlondikePredictor.Verdict.PROGRESS:
-			if bool(info.get("uncertain", false)):
-				status.text = "ПРОВЕРКА НЕ ЗАВЕРШЕНА"
-				detail.text = "Поиск достиг лимита проверки. Это ещё не означает, что ходов нет."
-			else:
-				status.text = "ХОД ВОЗМОЖЕН"
-				detail.text = "Найден путь к продвижению: можно открыть закрытую карту или пополнить основание."
-		KlondikePredictor.Verdict.STUCK_RECOVERABLE:
-			status.text = "НУЖНА ОТМЕНА"
-			detail.text = "Поиск нашёл путь к продвижению после отмены примерно %d ход(ов)." % int(info.get("undo_steps_needed", 0))
-		KlondikePredictor.Verdict.DEAD_END:
-			status.text = "ТУПИК"
-			detail.text = "В текущем состоянии продвижение не найдено даже после проверенных отмен. Можно выполнить тупиковый сброс или сдаться."
-		KlondikePredictor.Verdict.WON:
-			status.text = "ПОЛЕ СОБРАНО"
-			detail.text = "Все карты этого поля собраны."
-		_:
-			status.text = "АНАЛИЗИРУЕМ..."
-			detail.text = "Проверяем доступные последовательности ходов. Пока поиск не закончен, тупик не объявляется."
+
+	var history_count := game_manager.get_field_history_count(field_id)
 	var field_stats := game_manager.get_field_stats(field_id)
 	var reset_count := int(field_stats.get("normal_resets", 0))
 	var reset_cost := game_manager.get_normal_reset_cost(field_id)
-	counter.text = "ОБЫЧНЫЕ СБРОСЫ: %d · СЛЕДУЮЩИЙ: %d ХОДОВ" % [reset_count, reset_cost]
-	normal_reset.text = "ОБЫЧНЫЙ СБРОС · %d" % reset_cost
-	normal_reset.disabled = game_manager.is_dealing or game_manager.get_field_history_count(field_id) < reset_cost
-	deadend_reset.visible = verdict == KlondikePredictor.Verdict.DEAD_END
-	surrender.visible = verdict == KlondikePredictor.Verdict.DEAD_END
-	deadend_reset.disabled = game_manager.is_dealing or game_manager.get_field_history_count(field_id) < 2
-	surrender.disabled = game_manager.is_dealing
-	hint_button.disabled = game_manager.is_dealing or game_manager.hint_charges <= 0
-	hint_button.text = "ПОДСКАЗКА · %d" % game_manager.hint_charges
+	var moves_to_reset := maxi(0, reset_cost - history_count)
+	var deadend_undo := maxi(0, history_count - 10)
+
+	if game_manager.game_finished:
+		status.text = "ПАРТИЯ ЗАВЕРШЕНА"
+	elif not game_manager.rules is KlondikeRules:
+		status.text = "РЕЖИМ ПАУК"
+	else:
+		var info: Dictionary = game_manager.field_verdicts.get(field_id, {})
+		var verdict := int(info.get("verdict", -1))
+		match verdict:
+			KlondikePredictor.Verdict.PROGRESS:
+				status.text = "ХОД ВОЗМОЖЕН" if not bool(info.get("uncertain", false)) else "ИДЁТ ПРОВЕРКА"
+			KlondikePredictor.Verdict.STUCK_RECOVERABLE:
+				status.text = "НУЖНА ОТМЕНА"
+			KlondikePredictor.Verdict.DEAD_END:
+				status.text = "ТУПИК"
+			KlondikePredictor.Verdict.WON:
+				status.text = "ПОЛЕ СОБРАНО"
+			_:
+				status.text = "АНАЛИЗИРУЕМ..."
+
+	if game_manager.rules is KlondikeRules:
+		(ui["moves_to_reset"] as Label).text = "ДО СБРОСА\n%d ХОДОВ" % moves_to_reset
+		(ui["normal_reset_undo"] as Label).text = "ОБЫЧНЫЙ СБРОС\n−%d ХОДОВ" % reset_cost
+		(ui["deadend_reset_undo"] as Label).text = "ТУПИКОВЫЙ СБРОС\n−%d ХОДОВ" % deadend_undo
+		(ui["hints"] as Label).text = "ПОДСКАЗКИ\n%d / %d" % [game_manager.hint_charges, game_manager.hints_used]
+	else:
+		(ui["moves_to_reset"] as Label).text = "ДО СБРОСА\n—"
+		(ui["normal_reset_undo"] as Label).text = "ОБЫЧНЫЙ СБРОС\n—"
+		(ui["deadend_reset_undo"] as Label).text = "ТУПИКОВЫЙ СБРОС\n—"
+		(ui["hints"] as Label).text = "ПОДСКАЗКИ\nН/Д"
+
+	(ui["undos"] as Label).text = "ОТМЕНЫ\n%d / %d" % [game_manager.undo_charges, int(field_stats.get("undos", 0))]
+	(ui["reset_count"] as Label).text = "СБРОСЫ\n%d" % reset_count
 
 
-func _set_additional_hint_output(slot: int, message: String) -> void:
-	var ui := _additional_ui_for_slot(slot)
-	if not ui.is_empty():
-		(ui["hint_output"] as Label).text = message
+func _get_player_field_id() -> String:
+	var slot := local_player_slot if network_session_active else 1
+	return _get_additional_field_id(slot)
 
 
-func _on_additional_normal_reset(slot: int) -> void:
-	var field_id := _get_additional_field_id(slot)
+func _setup_player_controls() -> void:
+	# В меню уровень работает в SubViewport как фон с ботом — HUD там не нужен.
+	if get_viewport() != get_tree().root:
+		return
+	_player_hud_layer = CanvasLayer.new()
+	_player_hud_layer.name = "PlayerGameControls"
+	_player_hud_layer.layer = 10
+	add_child(_player_hud_layer)
+
+	_player_hud_root = Control.new()
+	_player_hud_root.name = "PlayerControlsRoot"
+	_player_hud_root.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_player_hud_root.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_player_hud_layer.add_child(_player_hud_root)
+
+	var viewport_size := get_viewport().get_visible_rect().size
+	var hud_scale := 1.0
+	if viewport_size.x > 0.0 and viewport_size.y > 0.0:
+		hud_scale = minf(1.0, minf(viewport_size.x / 500.0, viewport_size.y / 190.0))
+	var panel := PanelContainer.new()
+	panel.name = "PlayerControlsPanel"
+	panel.anchor_left = 1.0
+	panel.anchor_top = 1.0
+	panel.anchor_right = 1.0
+	panel.anchor_bottom = 1.0
+	panel.offset_left = -476.0 * hud_scale
+	panel.offset_top = -160.0 * hud_scale
+	panel.offset_right = -16.0 * hud_scale
+	panel.offset_bottom = -16.0 * hud_scale
+	panel.custom_minimum_size = Vector2(460, 144) * hud_scale
+	var panel_style := StyleBoxFlat.new()
+	panel_style.bg_color = Color(0.04, 0.07, 0.11, 0.92)
+	panel_style.border_color = Color("#52657D")
+	panel_style.set_border_width_all(2)
+	panel_style.set_corner_radius_all(10)
+	panel.add_theme_stylebox_override("panel", panel_style)
+	_player_hud_root.add_child(panel)
+
+	var margin := MarginContainer.new()
+	for side in ["left", "right", "top", "bottom"]:
+		margin.add_theme_constant_override("margin_" + side, roundi(8.0 * hud_scale))
+	panel.add_child(margin)
+
+	var grid := GridContainer.new()
+	grid.columns = 2
+	grid.add_theme_constant_override("h_separation", roundi(8.0 * hud_scale))
+	grid.add_theme_constant_override("v_separation", roundi(8.0 * hud_scale))
+	margin.add_child(grid)
+
+	_player_hint_button = _make_screen_button("ПОДСКАЗКА", Color("#44366D"))
+	_player_normal_reset_button = _make_screen_button("ОБЫЧНЫЙ СБРОС", Color("#245A4A"))
+	_player_deadend_reset_button = _make_screen_button("ТУПИКОВЫЙ СБРОС", Color("#6E4B22"))
+	_player_surrender_button = _make_screen_button("СДАТЬСЯ", Color("#6E2A22"))
+
+	for button in [_player_hint_button, _player_normal_reset_button, _player_deadend_reset_button, _player_surrender_button]:
+		button.custom_minimum_size = Vector2(210, 58) * hud_scale
+		button.add_theme_font_size_override("font_size", maxi(14, roundi(22.0 * hud_scale)))
+		grid.add_child(button)
+
+	_player_hint_button.pressed.connect(_on_player_hint_pressed)
+	_player_normal_reset_button.pressed.connect(_on_player_normal_reset_pressed)
+	_player_deadend_reset_button.pressed.connect(_on_player_deadend_reset_pressed)
+	_player_surrender_button.pressed.connect(_on_player_surrender_pressed)
+	_refresh_player_controls()
+
+
+func _refresh_player_controls() -> void:
+	if not is_instance_valid(_player_hud_layer):
+		return
+	var supported := (
+		is_instance_valid(game_manager)
+		and game_manager.rules is KlondikeRules
+		and not game_manager.game_finished
+	)
+	_player_hud_root.visible = supported
+	if not supported:
+		return
+
+	var field_id := _get_player_field_id()
+	var has_field := not field_id.is_empty()
+	var history_count := game_manager.get_field_history_count(field_id) if has_field else 0
+	var reset_cost := game_manager.get_normal_reset_cost(field_id) if has_field else 0
+	var info: Dictionary = game_manager.field_verdicts.get(field_id, {})
+	var verdict := int(info.get("verdict", -1))
+	var can_act := has_field and not game_manager.is_dealing
+
+	_player_hint_button.text = "ПОДСКАЗКА · %d" % game_manager.hint_charges
+	_player_hint_button.visible = true
+	_player_hint_button.disabled = not can_act or game_manager.hint_charges <= 0
+
+	_player_normal_reset_button.text = "СБРОС · %d" % reset_cost
+	_player_normal_reset_button.visible = true
+	_player_normal_reset_button.disabled = not can_act or history_count < reset_cost
+
+	var is_dead_end := verdict == KlondikePredictor.Verdict.DEAD_END
+	_player_deadend_reset_button.visible = is_dead_end
+	_player_deadend_reset_button.text = "ТУПИК · −%d" % maxi(0, history_count - 10)
+	_player_deadend_reset_button.disabled = not can_act
+	_player_surrender_button.visible = is_dead_end
+	_player_surrender_button.disabled = not can_act
+
+
+func _on_player_hint_pressed() -> void:
+	var field_id := _get_player_field_id()
 	if game_manager == null or field_id.is_empty():
 		return
-	if not game_manager.normal_reset_field(field_id):
-		_set_additional_hint_output(slot, "Для обычного сброса пока недостаточно записанных ходов.")
+	game_manager.request_hint(field_id)
+
+
+func _on_player_normal_reset_pressed() -> void:
+	var field_id := _get_player_field_id()
+	if game_manager == null or field_id.is_empty():
+		return
+	if game_manager.normal_reset_field(field_id):
+		_clear_hint_arrow()
 	_refresh_additional_screens()
 
 
-func _on_additional_deadend_reset(slot: int) -> void:
-	var field_id := _get_additional_field_id(slot)
+func _on_player_deadend_reset_pressed() -> void:
+	var field_id := _get_player_field_id()
 	if game_manager == null or field_id.is_empty():
 		return
-	if not game_manager.deadend_reset_field(field_id):
-		_set_additional_hint_output(slot, "Для тупикового сброса нужны две записи истории ходов.")
+	if game_manager.deadend_reset_field(field_id):
+		_clear_hint_arrow()
 	_refresh_additional_screens()
 
 
-func _on_additional_surrender(slot: int) -> void:
-	var field_id := _get_additional_field_id(slot)
+func _on_player_surrender_pressed() -> void:
+	var field_id := _get_player_field_id()
 	if game_manager != null and not field_id.is_empty():
 		game_manager.surrender(field_id)
 	_refresh_additional_screens()
 
 
-func _on_additional_hint(slot: int) -> void:
-	var field_id := _get_additional_field_id(slot)
-	if game_manager == null or field_id.is_empty():
+func _show_hint_arrow(entry: Dictionary) -> void:
+	_clear_hint_arrow()
+	var from_pile := entry.get("from_pile") as Pile
+	if not is_instance_valid(from_pile):
 		return
-	var hint_entries := game_manager.request_hint(field_id)
-	if hint_entries.is_empty():
-		_set_additional_hint_output(slot, "Подсказка не найдена для текущего состояния.")
+
+	var start := from_pile.global_position + Vector3.UP * 0.16
+	var to_pile := entry.get("to_pile") as Pile
+	var end := Vector3.ZERO
+	if is_instance_valid(to_pile):
+		var card_index := int(entry.get("card_index", -1))
+		if card_index >= 0 and card_index < from_pile.cards.size():
+			var source_card := from_pile.cards[card_index] as Card
+			if is_instance_valid(source_card):
+				start = source_card.global_position + Vector3.UP * 0.22
+		end = to_pile.global_position + Vector3.UP * 0.22
+	else:
+		# Добор/переворот колоды: вертикальная стрелка указывает на STOCK.
+		end = start + Vector3.UP * 0.58
+
+	var direction := end - start
+	var distance := direction.length()
+	if distance < 0.04:
+		return
+	direction /= distance
+
+	_hint_arrow_root = Node3D.new()
+	_hint_arrow_root.name = "PredictorHintArrow"
+	add_child(_hint_arrow_root)
+	_hint_arrow_root.global_transform = Transform3D.IDENTITY
+
+	var material := StandardMaterial3D.new()
+	material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	material.albedo_color = Color("#FFD45A")
+	material.emission_enabled = true
+	material.emission = Color("#FFD45A")
+	material.emission_energy_multiplier = 2.2
+
+	var head_length := minf(0.22, distance * 0.4)
+	var shaft_length := maxf(0.025, distance - head_length)
+	var shaft := CylinderMesh.new()
+	shaft.top_radius = 0.025
+	shaft.bottom_radius = 0.025
+	shaft.height = shaft_length
+	_add_hint_arrow_part(shaft, start + direction * (shaft_length * 0.5), direction, material)
+
+	var head := ConeMesh.new()
+	head.top_radius = 0.0
+	head.bottom_radius = 0.085
+	head.height = head_length
+	_add_hint_arrow_part(head, end - direction * (head_length * 0.5), direction, material)
+
+
+func _add_hint_arrow_part(mesh: Mesh, position: Vector3, direction: Vector3, material: StandardMaterial3D) -> void:
+	var part := MeshInstance3D.new()
+	part.mesh = mesh
+	part.material_override = material
+	part.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	_hint_arrow_root.add_child(part)
+	part.global_position = position
+	part.global_basis = Basis(Quaternion(Vector3.UP, direction.normalized()))
+
+
+func _clear_hint_arrow() -> void:
+	if is_instance_valid(_hint_arrow_root):
+		_hint_arrow_root.queue_free()
+	_hint_arrow_root = null
+
+
+func _clear_hint_on_board_press(pointer_position: Vector2) -> void:
+	var camera := get_viewport().get_camera_3d()
+	if camera == null:
+		return
+	var origin := camera.project_ray_origin(pointer_position)
+	var query := PhysicsRayQueryParameters3D.create(
+		origin,
+		origin + camera.project_ray_normal(pointer_position) * 100.0,
+		3
+	)
+	query.collide_with_areas = true
+	query.collide_with_bodies = true
+	var hit := get_world_3d().direct_space_state.intersect_ray(query)
+	if hit.is_empty():
+		return
+	var node := hit.get("collider") as Node
+	while node != null:
+		if node is Card or node is Pile:
+			_clear_hint_arrow()
+			return
+		node = node.get_parent()
+
+
+func _on_hints_changed(_charges: int, _used: int) -> void:
 	_refresh_additional_screens()
 
 
-func _on_hints_changed(charges: int, _used: int) -> void:
-	for entry in additional_screen_entries:
-		var slot := int(entry.get("slot", 1))
-		var ui: Dictionary = entry.get("ui", {})
-		if ui.is_empty():
-			continue
-		var button: Button = ui["hint_button"]
-		button.text = "ПОДСКАЗКА · %d" % charges
-		button.disabled = charges <= 0 or game_manager == null or game_manager.game_finished or _get_additional_field_id(slot).is_empty()
-
-
 func _on_hint_ready(field_id: String, entries: Array) -> void:
-	for entry in additional_screen_entries:
-		var slot := int(entry.get("slot", 1))
-		if field_id != _get_additional_field_id(slot):
-			continue
-		var ui: Dictionary = entry.get("ui", {})
-		if ui.is_empty():
-			continue
-		var lines: Array[String] = []
-		for hint_entry in entries:
-			if hint_entry is Dictionary:
-				lines.append(str(hint_entry.get("text", "Следующий ход")))
-		(ui["hint_output"] as Label).text = "ПОДСКАЗКА:\n" + "\n".join(lines) if not lines.is_empty() else "Подсказка не найдена."
+	if field_id != _get_player_field_id() or entries.is_empty():
+		return
+	var first_move: Variant = entries[0]
+	if first_move is Dictionary:
+		_show_hint_arrow(first_move)
+
+
+
 
 func _setup_viewport() -> void:
 	ui_scale = minf(
@@ -1202,6 +1374,19 @@ func _screen_mesh_supports_surface(mesh_instance: MeshInstance3D, surface_index:
 		and surface_index < mesh_instance.mesh.get_surface_count()
 	)
 
+
+
+func _input(event: InputEvent) -> void:
+	if not is_instance_valid(_hint_arrow_root):
+		return
+	if event is InputEventMouseButton:
+		var mouse_event := event as InputEventMouseButton
+		if mouse_event.button_index == MOUSE_BUTTON_LEFT and mouse_event.pressed:
+			_clear_hint_on_board_press(mouse_event.position)
+	elif event is InputEventScreenTouch:
+		var touch_event := event as InputEventScreenTouch
+		if touch_event.pressed:
+			_clear_hint_on_board_press(touch_event.position)
 
 
 func _unhandled_input(event: InputEvent) -> void:
@@ -1984,10 +2169,7 @@ func _flush_screen_refresh() -> void:
 	_refresh_additional_screens()
 
 func _on_history_changed(_move_count: int) -> void:
-	for entry in additional_screen_entries:
-		var ui: Dictionary = entry.get("ui", {})
-		if not ui.is_empty():
-			(ui["hint_output"] as Label).text = "Подсказка появится здесь."
+	_clear_hint_arrow()
 	_queue_screen_refresh()
 	_refresh_additional_screens()
 
@@ -2860,7 +3042,7 @@ func _setup_screen_material() -> void:
 	screen_material.shader = SCREEN_SHADER
 	screen_material.set_shader_parameter("screen_texture", screen_viewport.get_texture())
 	screen_material.set_shader_parameter("emission_energy", emission_energy)
-	screen_material.set_shader_parameter("rotate_clockwise", rotate_clockwise)
+	screen_material.set_shader_parameter("rotation_mode", 3 if rotate_clockwise else 0)
 
 	var applied := 0
 	for mesh_instance in models:
