@@ -122,6 +122,7 @@ func get_field_stats(field_id: String) -> Dictionary:
 		"moves": int(s.get("moves", 0)),
 		"undos": int(s.get("undos", 0)),
 		"normal_resets": int(s.get("normal_resets", 0)),
+		"deadend_resets": int(s.get("deadend_resets", 0)),
 		"deadend_protected_moves": int(s.get("deadend_protected_moves", 0))
 	}
 
@@ -170,7 +171,7 @@ func _record_field(record: MoveRecord) -> String:
 
 func _add_field_stat(field_id: String, key: String, delta: int) -> void:
 	if not field_stats.has(field_id):
-		field_stats[field_id] = {"moves": 0, "undos": 0, "normal_resets": 0}
+		field_stats[field_id] = {"moves": 0, "undos": 0, "normal_resets": 0, "deadend_resets": 0}
 	var stats: Dictionary = field_stats[field_id]
 	stats[key] = maxi(0, int(stats.get(key, 0)) + delta)
 	field_stats[field_id] = stats
@@ -878,6 +879,7 @@ func _redeal_field(field_id: String, undo_steps: int, count_normal_reset: bool) 
 	if count_normal_reset:
 		_add_field_stat(field_id, "normal_resets", 1)
 	elif protected_move_floor >= 0:
+		_add_field_stat(field_id, "deadend_resets", 1)
 		var updated_stats := get_field_stats(field_id)
 		updated_stats["deadend_protected_moves"] = protected_move_floor
 		field_stats[field_id] = updated_stats
@@ -885,11 +887,102 @@ func _redeal_field(field_id: String, undo_steps: int, count_normal_reset: bool) 
 	_batch_redeal_in_progress = false
 	deadlocked_field = ""
 	field_verdicts.erase(field_id)
+
+	# Обычный сброс сначала откатывает последние N ходов и перемешивает поле,
+	# затем делает случайное число допустимых ходов от 0 до N.
+	if count_normal_reset and undo_steps > 0:
+		_play_random_field_moves(field_id, undo_steps)
+
 	history_changed.emit(history.size())
 	_emit_statistics()
 	_emit_board_counts()
 	_check_state()
 	return true
+
+
+## Выполняет до max_moves случайных легальных действий только на указанном поле.
+## Перемещение карты идёт через try_move(), а раздача из колоды — через правила,
+## поэтому все автоматически сделанные ходы попадают в обычную историю и статистику.
+func _play_random_field_moves(field_id: String, max_moves: int) -> int:
+	var target_count := randi_range(0, maxi(0, max_moves))
+	var executed := 0
+
+	for _step in range(target_count):
+		if game_finished or rules == null or is_dealing:
+			break
+
+		var field_piles: Array[Pile] = []
+		var stock: Pile = null
+		var waste: Pile = null
+		var tableau: Array[Pile] = []
+		for pile in piles:
+			if not is_instance_valid(pile) or get_field_id(pile) != field_id:
+				continue
+			field_piles.append(pile)
+			match pile.kind:
+				PileMarker.Kind.STOCK:
+					stock = pile
+				PileMarker.Kind.WASTE:
+					waste = pile
+				PileMarker.Kind.TABLEAU:
+					tableau.append(pile)
+
+		if stock == null or tableau.is_empty():
+			break
+
+		var actions: Array[Dictionary] = []
+		var can_use_stock := false
+		if rules is KlondikeRules:
+			can_use_stock = not stock.cards.is_empty() or (waste != null and not waste.cards.is_empty())
+		elif rules is SpiderRules:
+			can_use_stock = not stock.cards.is_empty()
+			for column in tableau:
+				if column.cards.is_empty():
+					can_use_stock = false
+					break
+		if can_use_stock:
+			actions.append({"type": "stock", "pile": stock})
+
+		for source in field_piles:
+			if source.kind == PileMarker.Kind.STOCK:
+				continue
+			for card in source.cards:
+				if not is_instance_valid(card) or not card.face_up:
+					continue
+				var group: Array[Card] = rules.get_group(card)
+				if group.is_empty() or group[0] != card:
+					continue
+				for target in field_piles:
+					if target == source or not rules.can_drop(group, target):
+						continue
+					var saved_group: Array[Card] = []
+					saved_group.assign(group)
+					actions.append({
+						"type": "move",
+						"group": saved_group,
+						"target": target
+					})
+
+		if actions.is_empty():
+			break
+
+		var action: Dictionary = actions[randi_range(0, actions.size() - 1)]
+		if str(action.get("type", "")) == "stock":
+			var stock_pile := action.get("pile") as Pile
+			if stock_pile == null or not rules.on_pile_clicked(stock_pile):
+				break
+		else:
+			var move_group: Array[Card] = []
+			move_group.assign(action.get("group", []))
+			var target_pile := action.get("target") as Pile
+			if not try_move(move_group, target_pile):
+				break
+
+		executed += 1
+
+	return executed
+
+
 func _check_state() -> void:
 	if rules == null or is_dealing or game_finished:
 		return
