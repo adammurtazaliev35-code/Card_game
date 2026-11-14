@@ -566,7 +566,6 @@ func _setup_additional_screen_material() -> void:
 		material.set_shader_parameter("emission_energy", additional_emission_energy)
 		# Дополнительный экран физически установлен вертикально.
 		# Поворот задаётся явно, независимо от соотношения сторон SubViewport.
-		material.set_shader_parameter("rotate_clockwise", additional_rotate_clockwise)
 		material.set_shader_parameter(
 			"rotation_mode",
 			3 if additional_rotate_clockwise else 0
