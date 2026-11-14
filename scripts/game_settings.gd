@@ -442,7 +442,7 @@ static func apply_voice_input() -> void:
 	InputMap.action_erase_events(VOICE_PTT_ACTION)
 	if is_voice_key_binding_supported() and voice_ptt_keycode > 0:
 		var event := InputEventKey.new()
-		event.physical_keycode = voice_ptt_keycode
+		event.physical_keycode = voice_ptt_keycode as Key
 		InputMap.action_add_event(VOICE_PTT_ACTION, event)
 
 
