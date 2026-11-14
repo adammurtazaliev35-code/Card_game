@@ -533,7 +533,8 @@ func describe_hint(hint: Array) -> Array:
 			# При recycle игрок нажимает пустой Stock: карты возвращаются из Waste.
 			entry["from_pile"] = piles[IDX_WASTE]
 			entry["to_pile"] = piles[IDX_STOCK]
-			entry["card_index"] = (piles[IDX_WASTE] as Pile).cards.size() - 1
+			var waste_size := (piles[IDX_WASTE] as Pile).cards.size()
+			entry["card_index"] = 0 if waste_play_front else waste_size - 1
 		else:
 			var src: Array = state[mv["from"]]
 			var from_front := int(mv["from"]) == IDX_WASTE and waste_play_front
