@@ -2367,12 +2367,12 @@ func _get_slot_stats(slot: int) -> Dictionary:
 		var anchor := player_one_stock if slot == 1 else player_two_stock
 		if not is_instance_valid(anchor):
 			return {}
-		var field_id := game_manager.get_field_id(anchor)
-		var field := game_manager.get_field_stats(field_id)
+		var mirrored_field_id := game_manager.get_field_id(anchor)
+		var field := game_manager.get_field_stats(mirrored_field_id)
 		return {
 			"moves": int(field["moves"]),
 			"undos": int(field["undos"]),
-			"available": mini(game_manager.get_field_history_count(field_id), game_manager.undo_charges),
+			"available": mini(game_manager.get_field_history_count(mirrored_field_id), game_manager.undo_charges),
 		}
 	var field_id := (
 		game_manager.get_field_id(player_one_stock)
@@ -3000,9 +3000,9 @@ func _update_ring_progress(is_klondike: bool, stock: Pile) -> void:
 			func(a: Pile, b: Pile) -> bool:
 				return a.marker_suit < b.marker_suit
 		)
-		var rows: Array = ring_ui["foundation_rows"]
+		var foundation_rows: Array = ring_ui["foundation_rows"]
 		for suit_index in range(FOUNDATION_COUNT):
-			var row: Dictionary = rows[suit_index]
+			var row: Dictionary = foundation_rows[suit_index]
 			var pile: Pile = foundations[suit_index] if suit_index < foundations.size() else null
 			var count := pile.cards.size() if is_instance_valid(pile) else 0
 			row["root"].visible = true
@@ -3019,12 +3019,12 @@ func _update_ring_progress(is_klondike: bool, stock: Pile) -> void:
 	var data := _get_spider_sequence_counts(stock)
 	var totals: Dictionary = data["totals"]
 	var completed: Dictionary = data["completed"]
-	var rows: Array = ring_ui["spider_stack_rows"]
+	var spider_rows: Array = ring_ui["spider_stack_rows"]
 	for suit_index in range(FOUNDATION_COUNT):
 		var suit := suit_index + 1
 		var total := int(totals[suit])
 		var done := int(completed[suit])
-		var row: Dictionary = rows[suit_index]
+		var row: Dictionary = spider_rows[suit_index]
 		row["root"].visible = total > 0
 		row["suit"].text = SUIT_SYMBOLS[suit_index]
 		row["count"].text = "%d/%d" % [done, total]
