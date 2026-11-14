@@ -210,6 +210,7 @@ func _send_snapshot() -> void:
 		"seq": _send_seq,
 		"slot": local_slot,
 		"piles": piles_data,
+		"field_stats": _local_scope_field_stats(),
 		"stats": {
 			"moves": game_manager.moves_count,
 			"undos": game_manager.undo_count,
@@ -235,6 +236,18 @@ func _local_scope_piles() -> Array[Pile]:
 		if is_split_ownership() and get_pile_owner_slot(pile) != local_slot:
 			continue
 		result.append(pile)
+	return result
+
+
+## Счётчики тех же полей, которые входят в сетевой снимок стопок.
+func _local_scope_field_stats() -> Dictionary:
+	var result: Dictionary = {}
+	var included_fields: Dictionary = {}
+	for pile in _local_scope_piles():
+		included_fields[get_field_id(pile)] = true
+	for field_id_variant in included_fields:
+		var field_id := str(field_id_variant)
+		result[field_id] = game_manager.get_field_stats(field_id)
 	return result
 
 
@@ -344,6 +357,10 @@ func _apply_snapshot(payload: Dictionary) -> void:
 		if codes != _encode_pile(pile):
 			changed = true
 	if not changed:
+		# Счётчики могут измениться без изменения положения карт (например,
+		# при сбросе поля), поэтому применяем статистику и в этом случае.
+		if _apply_field_stats_snapshot(payload.get("field_stats", {}), targets):
+			game_manager.notify_external_change()
 		return
 
 	# 2. Пул реальных карт этих стопок: карты не создаются и не удаляются.
@@ -401,7 +418,40 @@ func _apply_snapshot(payload: Dictionary) -> void:
 			game_manager.history.clear()
 	_applying_remote = false
 
+	_apply_field_stats_snapshot(payload.get("field_stats", {}), targets)
 	game_manager.notify_external_change()
+
+
+## Принимает статистику только для полей, чьи стопки прошли проверку владельца
+## в текущем снимке. Не зависит от того, изменился ли состав карт.
+func _apply_field_stats_snapshot(data: Variant, targets: Array[Pile]) -> bool:
+	if not data is Dictionary:
+		return false
+
+	var allowed_fields: Dictionary = {}
+	for pile in targets:
+		if is_instance_valid(pile):
+			allowed_fields[get_field_id(pile)] = true
+
+	var changed := false
+	for field_id_variant in data:
+		var field_id := str(field_id_variant)
+		if not allowed_fields.has(field_id):
+			continue
+		var incoming: Variant = data[field_id_variant]
+		if not incoming is Dictionary:
+			continue
+		var normalized := {
+			"moves": maxi(0, int(incoming.get("moves", 0))),
+			"undos": maxi(0, int(incoming.get("undos", 0))),
+			"normal_resets": maxi(0, int(incoming.get("normal_resets", 0))),
+			"deadend_resets": maxi(0, int(incoming.get("deadend_resets", 0)))
+		}
+		if game_manager.get_field_stats(field_id) == normalized:
+			continue
+		game_manager.field_stats[field_id] = normalized
+		changed = true
+	return changed
 
 
 func _cancel_local_drag_if_touching(targets: Array[Pile]) -> void:
