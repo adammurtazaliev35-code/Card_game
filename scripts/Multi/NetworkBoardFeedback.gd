@@ -15,6 +15,7 @@ class_name NetworkBoardFeedback
 
 enum CardPlane { XZ, XY }
 enum PointerState { MOVE, HOVER, DRAG, RELEASE }
+var _remote_speaking := false
 @export_group("Указатель")
 @export var camera_path: NodePath
 @export_flags_3d_physics var pointer_collision_mask: int = 0xFFFFFFFF
@@ -77,7 +78,6 @@ var _remote_drag_cards: Array[Card] = []
 var _remote_drag_offsets: Array[Vector3] = []
 var _remote_drag_target := Vector3.ZERO
 var _release_flash := 0.0
-var _remote_speaking := false
 
 
 func _ready() -> void:
@@ -108,6 +108,10 @@ func _notification(what: int) -> void:
 			_mouse_inside = false
 		NOTIFICATION_WM_MOUSE_ENTER, NOTIFICATION_APPLICATION_FOCUS_IN:
 			_mouse_inside = true
+
+func set_remote_speaking(value: bool) -> void:
+	_remote_speaking = value
+
 
 func _process(delta: float) -> void:
 	if not _is_network_match():
@@ -521,10 +525,6 @@ func _state_caption() -> String:
 		PointerState.RELEASE:
 			return "отпустил"
 	return "ход"
-
-
-func set_remote_speaking(value: bool) -> void:
-	_remote_speaking = value
 
 
 func _now() -> float:
