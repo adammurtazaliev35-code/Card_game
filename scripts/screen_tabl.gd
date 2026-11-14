@@ -694,7 +694,7 @@ func _refresh_additional_screen_entry(slot: int, ui: Dictionary) -> void:
 		(ui["deadend_reset_undo"] as Label).text = "ТУПИКОВЫЙ СБРОС\n—"
 		(ui["hints"] as Label).text = "ПОДСКАЗКИ\nН/Д"
 
-	(ui["undos"] as Label).text = "ОТМЕНЫ\n%d / %d" % [game_manager.undo_charges, game_manager.undo_count]
+	(ui["undos"] as Label).text = "ОТМЕНЫ\n%d / %d" % [game_manager.undo_charges, int(field_stats.get("undos", 0))]
 	(ui["reset_count"] as Label).text = "СБРОСЫ\n%d" % reset_count
 
 
