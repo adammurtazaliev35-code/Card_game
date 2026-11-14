@@ -13,10 +13,14 @@ const TEXT_COLOR := Color("#F3E6C8")
 var _panel: PanelContainer
 var _name_labels: Array[Label] = []
 var _role_labels: Array[Label] = []
+var _voice_labels: Array[Label] = []
+var _voice_active: Array[bool] = [false, false]
+var _voice_phase := 0.0
 
 
 func _ready() -> void:
 	layer = 80
+	add_to_group("network_match_signs")
 	_build_panel()
 	_refresh_panel()
 	if not GDSync.disconnected.is_connected(_on_disconnected):
@@ -25,12 +29,23 @@ func _ready() -> void:
 		GDSync.client_left.connect(_on_client_left)
 
 
-func _process(_delta: float) -> void:
+func _process(delta: float) -> void:
 	var should_show := NetworkMatchState.active and GDSync.is_active()
 	if _panel.visible != should_show:
 		_panel.visible = should_show
-	if should_show:
-		_refresh_panel()
+	if not should_show:
+		return
+
+	_refresh_panel()
+	_voice_phase += delta * 6.0
+	for i in range(_voice_labels.size()):
+		var label := _voice_labels[i]
+		label.visible = _voice_active[i]
+		if _voice_active[i]:
+			var pulse := 0.5 + 0.5 * sin(_voice_phase)
+			label.modulate.a = 0.55 + pulse * 0.45
+		else:
+			label.modulate.a = 1.0
 
 
 func _build_panel() -> void:
@@ -46,7 +61,7 @@ func _build_panel() -> void:
 	_panel.anchor_right = 1.0
 	_panel.anchor_top = 0.0
 	_panel.anchor_bottom = 0.0
-	_panel.offset_left = -286.0
+	_panel.offset_left = -350.0
 	_panel.offset_right = -18.0
 	_panel.offset_top = 18.0
 	_panel.offset_bottom = 112.0
@@ -84,11 +99,19 @@ func _build_panel() -> void:
 		name_label.add_theme_font_size_override("font_size", 15)
 		name_label.add_theme_color_override("font_color", TEXT_COLOR)
 		row.add_child(name_label)
+		var voice_label := Label.new()
+		voice_label.text = "● В ЭФИРЕ"
+		voice_label.visible = false
+		voice_label.add_theme_font_size_override("font_size", 10)
+		voice_label.add_theme_color_override("font_color", Color("#35C991"))
+		row.add_child(voice_label)
+
 		var role_label := Label.new()
 		role_label.add_theme_font_size_override("font_size", 10)
 		role_label.add_theme_color_override("font_color", Color("#BDAA82"))
 		row.add_child(role_label)
 		_name_labels.append(name_label)
+		_voice_labels.append(voice_label)
 		_role_labels.append(role_label)
 
 	_panel.visible = false
@@ -102,6 +125,17 @@ func _panel_style() -> StyleBoxFlat:
 	style.set_border_width_all(1)
 	style.set_corner_radius_all(8)
 	return style
+
+
+func set_voice_activity(slot: int, speaking: bool) -> void:
+	if slot not in [1, 2]:
+		return
+	var index := slot - 1
+	_voice_active[index] = speaking
+	if index < _voice_labels.size():
+		_voice_labels[index].visible = speaking
+		if not speaking:
+			_voice_labels[index].modulate.a = 1.0
 
 
 func _refresh_panel() -> void:
@@ -118,11 +152,15 @@ func _refresh_panel() -> void:
 
 func _on_client_left(client_id: int) -> void:
 	if client_id == NetworkMatchState.player_one_id or client_id == NetworkMatchState.player_two_id:
+		set_voice_activity(1, false)
+		set_voice_activity(2, false)
 		NetworkMatchState.active = false
 		_panel.visible = false
 
 
 func _on_disconnected() -> void:
+	set_voice_activity(1, false)
+	set_voice_activity(2, false)
 	NetworkMatchState.active = false
 	NetworkMatchState.player_one_name = "Игрок 1"
 	NetworkMatchState.player_two_name = "Игрок 2"
