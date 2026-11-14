@@ -559,7 +559,6 @@ func answer_rematch(accepted: bool) -> void:
 	if _rematch_incoming_id == 0 or _rematch_incoming_slot == 0:
 		return
 	var request_id := _rematch_incoming_id
-	var requester_slot := _rematch_incoming_slot
 	_rematch_incoming_id = 0
 	_rematch_incoming_slot = 0
 
