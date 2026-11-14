@@ -529,10 +529,11 @@ func _setup_additional_screen_material() -> void:
 		material.shader = ADDITIONAL_SCREEN_SHADER
 		material.set_shader_parameter("screen_texture", viewport.get_texture())
 		material.set_shader_parameter("emission_energy", additional_emission_energy)
-		# Mode 1 — 90° по часовой стрелке (согласовано с UV-пересчётом касаний).
+		# Mode 3 сохраняет ориентацию дополнительного экрана из прежней настройки
+		# и соответствует UV-пересчёту касаний ниже.
 		material.set_shader_parameter(
 			"rotation_mode",
-			1 if additional_rotate_clockwise else 0
+			3 if additional_rotate_clockwise else 0
 		)
 		entry["material"] = material
 
@@ -2853,8 +2854,8 @@ func _setup_screen_material() -> void:
 	screen_material.shader = SCREEN_SHADER
 	screen_material.set_shader_parameter("screen_texture", screen_viewport.get_texture())
 	screen_material.set_shader_parameter("emission_energy", emission_energy)
-	# Совместимо с основным экранным шейдером с rotation_mode.
-	screen_material.set_shader_parameter("rotation_mode", 1 if rotate_clockwise else 0)
+	# Сохраняем ориентацию основного экрана из shader default (mode 3).
+	screen_material.set_shader_parameter("rotation_mode", 3 if rotate_clockwise else 0)
 	screen_material.set_shader_parameter("rotate_clockwise", rotate_clockwise)
 
 	var applied := 0
