@@ -288,7 +288,7 @@ func _try_pick_card(screen_pos: Vector2) -> void:
 	if card == null:
 		# пустая колода: клик по самой зоне стопки
 		var pile := _resolve_pile(_ray(screen_pos, LAYER_PILES).get("collider"))
-		if pile != null and _can_interact(pile) and _stock_click_allowed(pile):
+		if pile != null and pile.kind == PileMarker.Kind.STOCK and _can_interact(pile) and _stock_click_allowed(pile):
 			clear_hint()
 			rules.on_pile_clicked(pile)
 		return
