@@ -46,6 +46,11 @@ static var shuffle_waste_on_recycle: bool = true
 static var is_multiplayer := false
 
 static func start_level(tree: SceneTree, m: int, draw: int = DRAW_ONE, suits: int = 0) -> void:
+	# This entry point is for a local launch from the menu or a local restart.
+	# Network matches enter through GDSync.change_scene after NetworkMatchState
+	# has been populated by the lobby, so a local launch must clear stale roster data.
+	NetworkMatchState.clear()
+	is_multiplayer = false
 	mode = m
 	draw_mode = draw
 	if suits in [1, 2, 4]:
