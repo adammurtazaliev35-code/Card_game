@@ -764,6 +764,7 @@ func _on_hint_ready(field_id: String, entries: Array) -> void:
 func _connect_player_action_buttons() -> void:
 	# Кнопки действий больше не размещаются на основном табло.
 	# Подсказка и обычный сброс находятся на дополнительных экранах.
+	pass
 
 
 func _player_slot(ui: Dictionary) -> int:
