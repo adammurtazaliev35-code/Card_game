@@ -97,7 +97,7 @@ var _deal_token := 0
 var field_stats: Dictionary = {}
 
 const FIELD_MAIN := "main"
-const DEADEND_PRESERVED_MOVES := 10
+const DEADEND_RESET_UNDO_STEPS := 2
 
 
 ## Поле, которому принадлежит стопка.
@@ -122,8 +122,7 @@ func get_field_stats(field_id: String) -> Dictionary:
 		"moves": int(s.get("moves", 0)),
 		"undos": int(s.get("undos", 0)),
 		"normal_resets": int(s.get("normal_resets", 0)),
-		"deadend_resets": int(s.get("deadend_resets", 0)),
-		"deadend_protected_moves": int(s.get("deadend_protected_moves", 0))
+		"deadend_resets": int(s.get("deadend_resets", 0))
 	}
 
 
@@ -136,19 +135,10 @@ func get_field_history_count(field_id: String) -> int:
 	return count
 
 
-## Сколько последних ходов поля следует отменить при тупиковом сбросе.
-## Первые десять записей текущей партии всегда сохраняются.
+## Тупиковый сброс всегда отменяет до двух последних ходов поля.
+## Если ходов меньше двух, отменяет только доступные записи.
 func get_deadend_reset_undo_count(field_id: String) -> int:
-	var stats := get_field_stats(field_id)
-	var total_moves := int(stats.get("moves", 0))
-	var protected_moves := maxi(
-		int(stats.get("deadend_protected_moves", 0)),
-		mini(DEADEND_PRESERVED_MOVES, total_moves)
-	)
-	return mini(
-		get_field_history_count(field_id),
-		maxi(0, total_moves - protected_moves)
-	)
+	return mini(get_field_history_count(field_id), DEADEND_RESET_UNDO_STEPS)
 
 
 ## Цена следующего обычного сброса для указанного поля.
@@ -742,18 +732,8 @@ func _redeal_field(field_id: String, undo_steps: int, count_normal_reset: bool) 
 	if game_finished or is_dealing or not (rules is KlondikeRules or rules is SpiderRules) or undo_steps < 0:
 		return false
 
-	# Фиксируем границу первых 10 эффективных ходов партии. Она сохраняется
-	# между последующими тупиковыми сбросами, когда история уже очищена.
-	var protected_move_floor := -1
-	if not count_normal_reset:
-		var current_stats := get_field_stats(field_id)
-		protected_move_floor = maxi(
-			int(current_stats.get("deadend_protected_moves", 0)),
-			mini(DEADEND_PRESERVED_MOVES, int(current_stats.get("moves", 0)))
-		)
-
-	# Выбираем только последние N записей целевого поля.
-	# Нулевой откат допустим: ранний тупик до десятого хода просто перемешивает поле.
+	# Выбираем последние N записей только целевого поля.
+	# Для тупикового сброса N не больше двух; если ходов меньше, отменяем доступные.
 	var selected_indices: Array[int] = []
 	if undo_steps > 0:
 		for history_index in range(history.size() - 1, -1, -1):
@@ -878,11 +858,8 @@ func _redeal_field(field_id: String, undo_steps: int, count_normal_reset: bool) 
 
 	if count_normal_reset:
 		_add_field_stat(field_id, "normal_resets", 1)
-	elif protected_move_floor >= 0:
+	else:
 		_add_field_stat(field_id, "deadend_resets", 1)
-		var updated_stats := get_field_stats(field_id)
-		updated_stats["deadend_protected_moves"] = protected_move_floor
-		field_stats[field_id] = updated_stats
 
 	_batch_redeal_in_progress = false
 	deadlocked_field = ""
