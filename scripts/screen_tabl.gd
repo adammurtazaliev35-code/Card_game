@@ -23,6 +23,7 @@ enum DisplayMode {
 }
 
 const SCREEN_SHADER = preload("res://shaders/multiplayer_screen.gdshader")
+const ADDITIONAL_SCREEN_SHADER = preload("res://shaders/additional_screen.gdshader")
 const STARTING_SCORE := 50
 const FOUNDATION_CARDS := 13
 const FOUNDATION_COUNT := 4
@@ -75,6 +76,7 @@ const FOUNDATION_RANKS := [
 @export_range(0, 10, 1) var additional_screen_surface_index := 1
 @export_range(0.1, 3.0, 0.1) var additional_emission_energy := 1.3
 @export var additional_rotate_clockwise := true
+@export_range(1.0, 2.0, 0.05) var additional_ui_scale := 1.45
 @export var additional_viewport_resolution := Vector2i(1024, 512)
 
 ## Старые ссылки сохраняются для чтения значений из уже сохранённых сцен.
@@ -456,7 +458,7 @@ func _setup_additional_viewports() -> void:
 
 func _build_additional_screen_ui(viewport: SubViewport, slot: int) -> Dictionary:
 	var previous_scale := ui_scale
-	ui_scale = minf(float(viewport.size.x) / 1024.0, float(viewport.size.y) / 512.0)
+	ui_scale = minf(float(viewport.size.x) / 1024.0, float(viewport.size.y) / 512.0) * additional_ui_scale
 	var root := Control.new()
 	root.name = "AdditionalScreenUI_P%d" % slot
 	root.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
@@ -489,10 +491,6 @@ func _build_additional_screen_ui(viewport: SubViewport, slot: int) -> Dictionary
 	detail.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	detail.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	column.add_child(detail)
-	var hint_output := _make_label("Подсказка появится здесь.", 14, Color("#C6A9EE"))
-	hint_output.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	hint_output.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	column.add_child(hint_output)
 	var counter := _make_label("ОБЫЧНЫЕ СБРОСЫ: 0 · СЛЕДУЮЩИЙ: 10 ХОДОВ", 13, Color("#9AAEC4"))
 	counter.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	column.add_child(counter)
@@ -516,7 +514,7 @@ func _build_additional_screen_ui(viewport: SubViewport, slot: int) -> Dictionary
 	surrender.pressed.connect(_on_additional_surrender.bind(slot))
 	ui_scale = previous_scale
 	return {
-		"title": title, "status": status, "detail": detail, "hint_output": hint_output,
+		"title": title, "status": status, "detail": detail,
 		"counter": counter, "normal_reset": normal_reset, "deadend_reset": deadend_reset,
 		"hint_button": hint_button, "surrender": surrender
 	}
@@ -528,15 +526,13 @@ func _setup_additional_screen_material() -> void:
 		var mesh_instance: MeshInstance3D = entry["model"]
 		var viewport: SubViewport = entry["viewport"]
 		var material := ShaderMaterial.new()
-		material.shader = SCREEN_SHADER
+		material.shader = ADDITIONAL_SCREEN_SHADER
 		material.set_shader_parameter("screen_texture", viewport.get_texture())
 		material.set_shader_parameter("emission_energy", additional_emission_energy)
-		# Дополнительный экран физически установлен вертикально.
-		# Поворот задаётся явно, независимо от соотношения сторон SubViewport.
-		material.set_shader_parameter("rotate_clockwise", additional_rotate_clockwise)
+		# Mode 1 — 90° по часовой стрелке (согласовано с UV-пересчётом касаний).
 		material.set_shader_parameter(
 			"rotation_mode",
-			3 if additional_rotate_clockwise else 0
+			1 if additional_rotate_clockwise else 0
 		)
 		entry["material"] = material
 
@@ -706,9 +702,11 @@ func _refresh_additional_screen_entry(slot: int, ui: Dictionary) -> void:
 
 
 func _set_additional_hint_output(slot: int, message: String) -> void:
+	# Короткие ошибки действий показываются в основном поле состояния,
+	# не занимая отдельную строку только ради подсказок.
 	var ui := _additional_ui_for_slot(slot)
 	if not ui.is_empty():
-		(ui["hint_output"] as Label).text = message
+		(ui["detail"] as Label).text = message
 
 
 func _on_additional_normal_reset(slot: int) -> void:
@@ -762,14 +760,13 @@ func _on_hint_ready(field_id: String, entries: Array) -> void:
 		var slot := int(entry.get("slot", 1))
 		if field_id != _get_additional_field_id(slot):
 			continue
-		var ui: Dictionary = entry.get("ui", {})
-		if ui.is_empty():
-			continue
-		var lines: Array[String] = []
-		for hint_entry in entries:
-			if hint_entry is Dictionary:
-				lines.append(str(hint_entry.get("text", "Следующий ход")))
-		(ui["hint_output"] as Label).text = "ПОДСКАЗКА:\n" + "\n".join(lines) if not lines.is_empty() else "Подсказка не найдена."
+
+		# Predictor даёт реальные source/target Pile. CardManager показывает
+		# стрелку непосредственно над игровым столом, а не текст на табло.
+		var card_manager := get_tree().get_first_node_in_group("card_manager") as CardManager
+		if is_instance_valid(card_manager):
+			card_manager.show_hint(entries)
+		return
 
 func _setup_viewport() -> void:
 	ui_scale = minf(
@@ -1984,10 +1981,6 @@ func _flush_screen_refresh() -> void:
 	_refresh_additional_screens()
 
 func _on_history_changed(_move_count: int) -> void:
-	for entry in additional_screen_entries:
-		var ui: Dictionary = entry.get("ui", {})
-		if not ui.is_empty():
-			(ui["hint_output"] as Label).text = "Подсказка появится здесь."
 	_queue_screen_refresh()
 	_refresh_additional_screens()
 
