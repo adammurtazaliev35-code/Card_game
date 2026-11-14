@@ -93,6 +93,7 @@ var _deal_token := 0
 var field_stats: Dictionary = {}
 
 const FIELD_MAIN := "main"
+const DEADEND_PRESERVED_MOVES := 10
 
 
 ## Поле, которому принадлежит стопка.
@@ -127,6 +128,12 @@ func get_field_history_count(field_id: String) -> int:
 		if _record_field(record) == field_id:
 			count += 1
 	return count
+
+
+## Сколько последних ходов поля следует отменить при тупиковом сбросе.
+## Первые десять записей текущей партии всегда сохраняются.
+func get_deadend_reset_undo_count(field_id: String) -> int:
+	return maxi(0, get_field_history_count(field_id) - DEADEND_PRESERVED_MOVES)
 
 
 ## Цена следующего обычного сброса для указанного поля.
@@ -483,19 +490,28 @@ func analyze_field(field_id: String) -> Dictionary:
 	return predictor.analyze(history, mini(history.size(), undo_charges))
 
 
-## Подсказка на hint_moves ходов вперёд для поля. Тратит одну подсказку.
-## Возвращает описания ходов; пусто — подсказок нет или ходов нет.
+## Визуальная подсказка для выбранного поля.
+## Клондайк использует BFS-предиктор, Паук — поиск допустимого хода по своим правилам.
+## Возвращаются реальные стопки и индекс ведущей карты; текст нужен только для логов.
 func request_hint(field_id: String) -> Array:
 	if game_finished or is_dealing:
 		return []
 	if hint_charges <= 0:
 		hint_limit_reached.emit()
 		return []
-	var predictor := _make_predictor(field_id)
-	if predictor == null:
+
+	var entries: Array = []
+	if rules is KlondikeRules:
+		var predictor := _make_predictor(field_id)
+		if predictor == null:
+			return []
+		var result := predictor.search(predictor.state_from_board())
+		entries = predictor.describe_hint(result["hint"])
+	elif rules is SpiderRules:
+		entries = _make_spider_hint(field_id)
+	else:
 		return []
-	var result := predictor.search(predictor.state_from_board())
-	var entries := predictor.describe_hint(result["hint"])
+
 	if entries.is_empty():
 		return []
 	hint_charges -= 1
@@ -503,6 +519,68 @@ func request_hint(field_id: String) -> Array:
 	hints_changed.emit(hint_charges, hints_used)
 	hint_ready.emit(field_id, entries)
 	return entries
+
+
+## Для Паука выбирает допустимый ход с приоритетом открытия закрытой карты,
+## сохранения последовательности одной масти и завершения королевского ряда.
+func _make_spider_hint(field_id: String) -> Array:
+	var spider_rules := rules as SpiderRules
+	if spider_rules == null:
+		return []
+
+	var tableau: Array[Pile] = []
+	var stock: Pile = null
+	for pile: Pile in piles:
+		if not is_instance_valid(pile) or get_field_id(pile) != field_id:
+			continue
+		if pile.kind == PileMarker.Kind.TABLEAU:
+			tableau.append(pile)
+		elif pile.kind == PileMarker.Kind.STOCK:
+			stock = pile
+
+	var best_entry: Dictionary = {}
+	var best_score := -1.0
+	for source: Pile in tableau:
+		for card_index in range(source.cards.size()):
+			var card := source.cards[card_index] as Card
+			if not card.face_up:
+				continue
+			var group: Array[Card] = spider_rules.get_group(card)
+			if group.is_empty():
+				continue
+			for target: Pile in tableau:
+				if target == source or not spider_rules.can_drop(group, target):
+					continue
+				if card_index == 0 and target.cards.is_empty():
+					continue
+				var score := 1.0 + float(group.size()) * 0.25
+				if card_index > 0 and not source.cards[card_index - 1].face_up:
+					score += 100.0
+				if group.size() >= 13:
+					score += 50.0
+				if target.cards.is_empty():
+					score += 3.0
+				elif target.cards.back().suit == card.suit:
+					score += 12.0
+				if score > best_score:
+					best_score = score
+					best_entry = {
+						"from_pile": source,
+						"to_pile": target,
+						"card_index": card_index,
+						"text": "перенос последовательности"
+					}
+
+	if not best_entry.is_empty():
+		return [best_entry]
+
+	# Когда между колонками нет полезного переноса, показываем разрешённую раздачу.
+	if is_instance_valid(stock) and not stock.cards.is_empty():
+		for pile: Pile in tableau:
+			if pile.cards.is_empty():
+				return []
+		return [{"from_pile": stock, "card_index": stock.cards.size() - 1, "draw": true, "text": "раздать карты"}]
+	return []
 
 
 func _queue_analysis() -> void:
@@ -616,29 +694,28 @@ func normal_reset_field(field_id: String) -> bool:
 	return _redeal_field(field_id, get_normal_reset_cost(field_id), true)
 
 
-## Тупиковый сброс: всегда отменяет ровно два последних хода и не меняет
-## счётчик обычных сбросов.
+## Тупиковый сброс отменяет только ходы после первых десяти.
+## При числе ходов <= 10 поле просто перетасовывается без отката истории.
 func deadend_reset_field(field_id: String) -> bool:
-	return _redeal_field(field_id, 2, false)
+	return _redeal_field(field_id, get_deadend_reset_undo_count(field_id), false)
 
 
 
 func _redeal_field(field_id: String, undo_steps: int, count_normal_reset: bool) -> bool:
-	if game_finished or is_dealing or not rules is KlondikeRules:
-		return false
-	if undo_steps <= 0:
+	if game_finished or is_dealing or not rules is KlondikeRules or undo_steps < 0:
 		return false
 
-	# Выбираем ровно N последних записей целевого поля, а не N последних
-	# глобальных записей: в зеркальной одиночной партии история общая.
+	# Выбираем только последние N записей целевого поля.
+	# Нулевой откат допустим: ранний тупик до десятого хода просто перемешивает поле.
 	var selected_indices: Array[int] = []
-	for history_index in range(history.size() - 1, -1, -1):
-		if _record_field(history[history_index]) == field_id:
-			selected_indices.append(history_index)
-			if selected_indices.size() >= undo_steps:
-				break
-	if selected_indices.size() < undo_steps:
-		return false
+	if undo_steps > 0:
+		for history_index in range(history.size() - 1, -1, -1):
+			if _record_field(history[history_index]) == field_id:
+				selected_indices.append(history_index)
+				if selected_indices.size() >= undo_steps:
+					break
+		if selected_indices.size() < undo_steps:
+			return false
 
 	var stock: Pile = null
 	var waste: Pile = null
