@@ -187,6 +187,7 @@ func set_network_session_state(
 	_refresh_undo_buttons()
 	_queue_screen_refresh()
 	_refresh_additional_screens()
+	_refresh_player_actions()
 
 
 func request_create_lobby() -> void:
@@ -692,15 +693,6 @@ func _refresh_additional_screen_entry(slot: int, ui: Dictionary) -> void:
 		int(stats["undos"]),
 		game_manager.hints_used
 	]
-
-
-func _refresh_additional_screens() -> void:
-	if game_manager == null:
-		return
-	for entry in additional_screen_entries:
-		var slot := int(entry.get("slot", 1))
-		var ui: Dictionary = entry.get("ui", {})
-		_refresh_additional_screen_entry(slot, ui)
 
 
 func _on_hints_changed(_charges: int, _used: int) -> void:
@@ -2086,6 +2078,9 @@ func _connect_game_manager() -> void:
 
 	_connect_network_sync()
 	_update_player_one()
+	for field_id in game_manager.field_verdicts.keys():
+		var cached_info: Dictionary = game_manager.field_verdicts[field_id]
+		_on_field_verdict_changed(str(field_id), int(cached_info.get("verdict", -1)), cached_info)
 	_on_statistics_changed(
 		game_manager.moves_count,
 		game_manager.undo_count,
@@ -2234,11 +2229,13 @@ func _on_game_won() -> void:
 		player_two_ui["status"].text = "ПОБЕДА"
 	_update_time_label()
 	_refresh_additional_screens()
+	_refresh_player_actions()
 
 
 func _on_game_lost(_winner_field: String) -> void:
 	timer_running = false
 	_refresh_additional_screens()
+	_refresh_player_actions()
 func _get_trailing_number(value: String) -> int:
 	var regex := RegEx.new()
 	regex.compile("([0-9]+)$")
