@@ -63,8 +63,7 @@ func clear_hint() -> void:
 	_clear_hint_visual()
 
 
-## Визуальная подсказка: выбранная карта пульсирует, стрелка ведёт к стопке-цели.
-## Стрелка и пульсация остаются до первого захвата карты игроком.
+## Визуальная подсказка: копия карты летит к целевой стопке и остаётся видимой до действия игрока или тайм-аута.
 func _show_hint(entries: Array) -> void:
 	_clear_hint_visual()
 	if entries.is_empty() or game_manager == null:
@@ -146,7 +145,16 @@ func _play_hint_card_flight(card: Card, target: Pile) -> void:
 		0.55
 	).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
 	_hint_animation_tween.tween_interval(4.45)
-	_hint_animation_tween.tween_callback(_clear_hint_visual)
+	_hint_animation_tween.tween_callback(_finish_hint_visual)
+
+
+func _finish_hint_visual() -> void:
+	# Callback вызывается самим Tween по завершении, поэтому здесь не kill()им
+	# выполняющуюся анимацию изнутри её же шага.
+	_hint_animation_tween = null
+	if is_instance_valid(_hint_visual_root):
+		_hint_visual_root.queue_free()
+	_hint_visual_root = null
 
 
 func _clear_hint_visual() -> void:
