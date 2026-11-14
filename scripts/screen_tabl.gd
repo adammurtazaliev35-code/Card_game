@@ -702,7 +702,7 @@ func _refresh_additional_screen_entry(slot: int, ui: Dictionary) -> void:
 	hint_button.text = "ПОДСКАЗКА · %d" % game_manager.hint_charges
 
 
-func _set_additional_hint_output(slot: int, message: String) -> void:
+func _set_additional_detail_message(slot: int, message: String) -> void:
 	# Короткие ошибки действий показываются в основном поле состояния,
 	# не занимая отдельную строку только ради подсказок.
 	var ui := _additional_ui_for_slot(slot)
@@ -715,7 +715,7 @@ func _on_additional_normal_reset(slot: int) -> void:
 	if game_manager == null or field_id.is_empty():
 		return
 	if not game_manager.normal_reset_field(field_id):
-		_set_additional_hint_output(slot, "Для обычного сброса пока недостаточно записанных ходов.")
+		_set_additional_detail_message(slot, "Для обычного сброса пока недостаточно записанных ходов.")
 	_refresh_additional_screens()
 
 
@@ -724,7 +724,7 @@ func _on_additional_deadend_reset(slot: int) -> void:
 	if game_manager == null or field_id.is_empty():
 		return
 	if not game_manager.deadend_reset_field(field_id):
-		_set_additional_hint_output(slot, "Для тупикового сброса нужны две записи истории ходов.")
+		_set_additional_detail_message(slot, "Для тупикового сброса нужны две записи истории ходов.")
 	_refresh_additional_screens()
 
 
