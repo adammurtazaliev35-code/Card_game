@@ -505,7 +505,7 @@ func _build_additional_screen_ui(viewport: SubViewport, slot: int) -> Dictionary
 	var deadend_undo := _create_additional_metric(second_row, "ОТКАТ ТУПИКОВОГО СБРОСА", "—", Color("#FF9A78"))
 	var hints_remaining := _create_additional_metric(second_row, "ПОДСКАЗОК ОСТАЛОСЬ", "—", Color("#C6A9EE"))
 
-	var footer := _make_label("ХОДЫ 0  ·  ОТМЕНЫ 0  ·  ПОДСКАЗКИ ИСПОЛЬЗОВАНО 0", 20, Color("#D5DFEA"))
+	var footer := _make_label("ХОДЫ 0  ·  ОТМЕНЫ ИСП. 0  ·  ОТМЕН ОСТАЛОСЬ 0  ·  ПОДСКАЗОК ИСП. 0", 18, Color("#D5DFEA"))
 	footer.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	column.add_child(footer)
 
@@ -688,9 +688,10 @@ func _refresh_additional_screen_entry(slot: int, ui: Dictionary) -> void:
 	(ui["deadend_undo"] as Label).text = str(deadend_undo) if game_manager.rules is KlondikeRules else "—"
 	(ui["hints_remaining"] as Label).text = str(game_manager.hint_charges)
 	var stats := game_manager.get_field_stats(field_id)
-	(ui["footer"] as Label).text = "ХОДЫ %d  ·  ОТМЕНЫ %d  ·  ПОДСКАЗКИ ИСПОЛЬЗОВАНО %d" % [
+	(ui["footer"] as Label).text = "ХОДЫ %d  ·  ОТМЕНЫ ИСП. %d  ·  ОТМЕН ОСТАЛОСЬ %d  ·  ПОДСКАЗОК ИСП. %d" % [
 		int(stats["moves"]),
 		int(stats["undos"]),
+		game_manager.undo_charges,
 		game_manager.hints_used
 	]
 
