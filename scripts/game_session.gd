@@ -16,6 +16,25 @@ static var board_layout: int = BOARD_LAYOUT_CLASSIC
 static var klondike_board_layout: int = BOARD_LAYOUT_CLASSIC
 static var spider_board_layout: int = BOARD_LAYOUT_CLASSIC
 
+## Возможность тупикового перезапуска хранится отдельно для каждого режима.
+static var klondike_allow_deadend_reset := true
+static var spider_allow_deadend_reset := true
+## Текущее эффективное значение; в сетевой игре приходит из конфигурации лобби.
+static var allow_deadend_reset := true
+
+
+static func get_deadend_reset_allowed(mode_id: int) -> bool:
+	return spider_allow_deadend_reset if mode_id == MODE_SPIDER else klondike_allow_deadend_reset
+
+
+static func set_deadend_reset_allowed(mode_id: int, enabled: bool) -> void:
+	if mode_id == MODE_SPIDER:
+		spider_allow_deadend_reset = enabled
+	else:
+		klondike_allow_deadend_reset = enabled
+	if mode == 0 or mode == mode_id:
+		allow_deadend_reset = enabled
+
 
 static func get_board_layout(mode_id: int) -> int:
 	if mode_id == MODE_SPIDER:

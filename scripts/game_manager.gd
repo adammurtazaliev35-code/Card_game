@@ -33,6 +33,10 @@ signal game_lost(winner_field: String)
 var winner_field := ""
 ## Поле, игрок которого сдался ("" — никто).
 var surrendered_field := ""
+## Поле, которое завершило партию из-за тупика (отдельная статистика).
+var deadlocked_field := ""
+## Во время массового сброса Undo не публикует промежуточные состояния.
+var _batch_redeal_in_progress := false
 
 ## Баланс лимитов (отмены, подсказки, награды). Пусто — res://resources/game_limits.tres.
 @export var limits: GameLimits
@@ -93,6 +97,7 @@ var _deal_token := 0
 var field_stats: Dictionary = {}
 
 const FIELD_MAIN := "main"
+const DEADEND_PRESERVED_MOVES := 10
 
 
 ## Поле, которому принадлежит стопка.
@@ -116,7 +121,8 @@ func get_field_stats(field_id: String) -> Dictionary:
 	return {
 		"moves": int(s.get("moves", 0)),
 		"undos": int(s.get("undos", 0)),
-		"normal_resets": int(s.get("normal_resets", 0))
+		"normal_resets": int(s.get("normal_resets", 0)),
+		"deadend_protected_moves": int(s.get("deadend_protected_moves", 0))
 	}
 
 
@@ -127,6 +133,21 @@ func get_field_history_count(field_id: String) -> int:
 		if _record_field(record) == field_id:
 			count += 1
 	return count
+
+
+## Сколько последних ходов поля следует отменить при тупиковом сбросе.
+## Первые десять записей текущей партии всегда сохраняются.
+func get_deadend_reset_undo_count(field_id: String) -> int:
+	var stats := get_field_stats(field_id)
+	var total_moves := int(stats.get("moves", 0))
+	var protected_moves := maxi(
+		int(stats.get("deadend_protected_moves", 0)),
+		mini(DEADEND_PRESERVED_MOVES, total_moves)
+	)
+	return mini(
+		get_field_history_count(field_id),
+		maxi(0, total_moves - protected_moves)
+	)
 
 
 ## Цена следующего обычного сброса для указанного поля.
@@ -247,6 +268,8 @@ func _emit_statistics() -> void:
 # Единая точка входа: сюда приходит выбор из главного меню.
 func start_game(mode: int) -> void:
 	_clear_board()
+	if not NetworkMatchState.active:
+		GameSession.allow_deadend_reset = GameSession.get_deadend_reset_allowed(mode)
 
 	current_mode = mode
 	draw_mode = GameSession.draw_mode if GameSession.draw_mode != 0 else draw_mode_id
@@ -424,10 +447,11 @@ func undo(use_charge: bool = true, field_id: String = "") -> bool:
 			if is_instance_valid(from):
 				from.add_card(card, s["index"])
 
-	history_changed.emit(history.size())
-	_emit_statistics()
-	_emit_board_counts()
-	_check_state()
+	if not _batch_redeal_in_progress:
+		history_changed.emit(history.size())
+		_emit_statistics()
+		_emit_board_counts()
+		_check_state()
 	return true
 func grant_ad_undo_reward() -> int:
 	if game_finished:
@@ -483,19 +507,28 @@ func analyze_field(field_id: String) -> Dictionary:
 	return predictor.analyze(history, mini(history.size(), undo_charges))
 
 
-## Подсказка на hint_moves ходов вперёд для поля. Тратит одну подсказку.
-## Возвращает описания ходов; пусто — подсказок нет или ходов нет.
+## Визуальная подсказка для выбранного поля.
+## Клондайк использует BFS-предиктор, Паук — поиск допустимого хода по своим правилам.
+## Возвращаются реальные стопки и индекс ведущей карты; текст нужен только для логов.
 func request_hint(field_id: String) -> Array:
 	if game_finished or is_dealing:
 		return []
 	if hint_charges <= 0:
 		hint_limit_reached.emit()
 		return []
-	var predictor := _make_predictor(field_id)
-	if predictor == null:
+
+	var entries: Array = []
+	if rules is KlondikeRules:
+		var predictor := _make_predictor(field_id)
+		if predictor == null:
+			return []
+		var result := predictor.search(predictor.state_from_board())
+		entries = predictor.describe_hint(result["hint"])
+	elif rules is SpiderRules:
+		entries = _make_spider_hint(field_id)
+	else:
 		return []
-	var result := predictor.search(predictor.state_from_board())
-	var entries := predictor.describe_hint(result["hint"])
+
 	if entries.is_empty():
 		return []
 	hint_charges -= 1
@@ -503,6 +536,68 @@ func request_hint(field_id: String) -> Array:
 	hints_changed.emit(hint_charges, hints_used)
 	hint_ready.emit(field_id, entries)
 	return entries
+
+
+## Для Паука выбирает допустимый ход с приоритетом открытия закрытой карты,
+## сохранения последовательности одной масти и завершения королевского ряда.
+func _make_spider_hint(field_id: String) -> Array:
+	var spider_rules := rules as SpiderRules
+	if spider_rules == null:
+		return []
+
+	var tableau: Array[Pile] = []
+	var stock: Pile = null
+	for pile: Pile in piles:
+		if not is_instance_valid(pile) or get_field_id(pile) != field_id:
+			continue
+		if pile.kind == PileMarker.Kind.TABLEAU:
+			tableau.append(pile)
+		elif pile.kind == PileMarker.Kind.STOCK:
+			stock = pile
+
+	var best_entry: Dictionary = {}
+	var best_score := -1.0
+	for source: Pile in tableau:
+		for card_index in range(source.cards.size()):
+			var card := source.cards[card_index] as Card
+			if not card.face_up:
+				continue
+			var group: Array[Card] = spider_rules.get_group(card)
+			if group.is_empty():
+				continue
+			for target: Pile in tableau:
+				if target == source or not spider_rules.can_drop(group, target):
+					continue
+				if card_index == 0 and target.cards.is_empty():
+					continue
+				var score := 1.0 + float(group.size()) * 0.25
+				if card_index > 0 and not source.cards[card_index - 1].face_up:
+					score += 100.0
+				if group.size() >= 13:
+					score += 50.0
+				if target.cards.is_empty():
+					score += 3.0
+				elif target.cards.back().suit == card.suit:
+					score += 12.0
+				if score > best_score:
+					best_score = score
+					best_entry = {
+						"from_pile": source,
+						"to_pile": target,
+						"card_index": card_index,
+						"text": "перенос последовательности"
+					}
+
+	if not best_entry.is_empty():
+		return [best_entry]
+
+	# Когда между колонками нет полезного переноса, показываем разрешённую раздачу.
+	if is_instance_valid(stock) and not stock.cards.is_empty():
+		for pile: Pile in tableau:
+			if pile.cards.is_empty():
+				return []
+		return [{"from_pile": stock, "card_index": stock.cards.size() - 1, "draw": true, "text": "раздать карты"}]
+	return []
 
 
 func _queue_analysis() -> void:
@@ -562,6 +657,9 @@ func _apply_analysis(results: Array, version: int) -> void:
 		call_deferred("_run_analysis")
 		return
 	var any_progress := false
+	var deadlocked_local_field := ""
+	var sync := NetworkMatchSync.find_in(get_tree())
+	var local_field := sync.field_of_slot(sync.local_slot) if sync != null else ""
 	for entry in results:
 		var field_id: String = entry[0]
 		var info: Dictionary = entry[1]
@@ -569,8 +667,6 @@ func _apply_analysis(results: Array, version: int) -> void:
 		var prev: Dictionary = field_verdicts.get(field_id, {})
 		field_verdicts[field_id] = info
 
-		# Сигнал также нужен при изменении uncertain / undo_steps_needed,
-		# даже если основной вердикт не поменялся.
 		var info_changed := (
 			prev.is_empty()
 			or int(prev.get("verdict", -1)) != verdict
@@ -580,11 +676,25 @@ func _apply_analysis(results: Array, version: int) -> void:
 		if info_changed:
 			field_verdict_changed.emit(field_id, verdict, info)
 
-		if verdict == KlondikePredictor.Verdict.PROGRESS or verdict == KlondikePredictor.Verdict.WON:
+		if verdict in [KlondikePredictor.Verdict.PROGRESS, KlondikePredictor.Verdict.STUCK_RECOVERABLE, KlondikePredictor.Verdict.WON]:
 			any_progress = true
+		elif verdict == KlondikePredictor.Verdict.DEAD_END and not GameSession.allow_deadend_reset:
+			if sync == null or field_id == local_field:
+				deadlocked_local_field = field_id
+
+	if not deadlocked_local_field.is_empty():
+		finish_dead_end(deadlocked_local_field)
+		return
 	moves_state_changed.emit(any_progress)
 	if not any_progress:
 		no_moves_left.emit()
+func finish_dead_end(field_id: String, notify_network: bool = true) -> void:
+	if game_finished or field_id.is_empty():
+		return
+	deadlocked_field = field_id
+	surrender(field_id, notify_network)
+
+
 func surrender(field_id: String, notify_network: bool = true) -> void:
 	if game_finished:
 		return
@@ -613,32 +723,45 @@ func redeal_field(field_id: String) -> bool:
 
 ## Обычный сброс: цена растёт на 5 после каждого успешного обычного сброса.
 func normal_reset_field(field_id: String) -> bool:
+	if not GameSession.allow_deadend_reset:
+		return false
 	return _redeal_field(field_id, get_normal_reset_cost(field_id), true)
 
 
-## Тупиковый сброс: всегда отменяет ровно два последних хода и не меняет
-## счётчик обычных сбросов.
+## Тупиковый сброс отменяет только ходы после первых десяти.
+## При числе ходов <= 10 поле просто перетасовывается без отката истории.
 func deadend_reset_field(field_id: String) -> bool:
-	return _redeal_field(field_id, 2, false)
+	if not GameSession.allow_deadend_reset:
+		return false
+	return _redeal_field(field_id, get_deadend_reset_undo_count(field_id), false)
 
 
 
 func _redeal_field(field_id: String, undo_steps: int, count_normal_reset: bool) -> bool:
-	if game_finished or is_dealing or not rules is KlondikeRules:
-		return false
-	if undo_steps <= 0:
+	if game_finished or is_dealing or not (rules is KlondikeRules or rules is SpiderRules) or undo_steps < 0:
 		return false
 
-	# Выбираем ровно N последних записей целевого поля, а не N последних
-	# глобальных записей: в зеркальной одиночной партии история общая.
+	# Фиксируем границу первых 10 эффективных ходов партии. Она сохраняется
+	# между последующими тупиковыми сбросами, когда история уже очищена.
+	var protected_move_floor := -1
+	if not count_normal_reset:
+		var current_stats := get_field_stats(field_id)
+		protected_move_floor = maxi(
+			int(current_stats.get("deadend_protected_moves", 0)),
+			mini(DEADEND_PRESERVED_MOVES, int(current_stats.get("moves", 0)))
+		)
+
+	# Выбираем только последние N записей целевого поля.
+	# Нулевой откат допустим: ранний тупик до десятого хода просто перемешивает поле.
 	var selected_indices: Array[int] = []
-	for history_index in range(history.size() - 1, -1, -1):
-		if _record_field(history[history_index]) == field_id:
-			selected_indices.append(history_index)
-			if selected_indices.size() >= undo_steps:
-				break
-	if selected_indices.size() < undo_steps:
-		return false
+	if undo_steps > 0:
+		for history_index in range(history.size() - 1, -1, -1):
+			if _record_field(history[history_index]) == field_id:
+				selected_indices.append(history_index)
+				if selected_indices.size() >= undo_steps:
+					break
+		if selected_indices.size() < undo_steps:
+			return false
 
 	var stock: Pile = null
 	var waste: Pile = null
@@ -656,12 +779,23 @@ func _redeal_field(field_id: String, undo_steps: int, count_normal_reset: bool) 
 	if stock == null or tableau.is_empty():
 		return false
 
-	tableau.sort_custom(func(a: Pile, b: Pile) -> bool:
-		return KlondikePredictor._marker_number(a) < KlondikePredictor._marker_number(b))
+	if rules is KlondikeRules:
+		tableau.sort_custom(func(a: Pile, b: Pile) -> bool:
+			return KlondikePredictor._marker_number(a) < KlondikePredictor._marker_number(b))
+	else:
+		tableau.sort_custom(func(a: Pile, b: Pile) -> bool:
+			return a.global_position.x < b.global_position.x)
+
+	# Проверяем владение всем полем даже при нулевом откате (ранний тупик).
+	# Иначе клиент мог бы перетасовать чужое поле, когда записей истории нет.
+	var sync := NetworkMatchSync.find_in(get_tree())
+	if sync != null:
+		for affected_pile in [stock, waste] + tableau:
+			if affected_pile is Pile and not sync.can_local_interact(affected_pile):
+				return false
 
 	# Предварительно проверяем все целевые записи: сетевой отказ не должен
 	# отменить часть ходов и оставить поле в промежуточном состоянии.
-	var sync := NetworkMatchSync.find_in(get_tree())
 	if sync != null:
 		for history_index in selected_indices:
 			var record: MoveRecord = history[history_index]
@@ -674,18 +808,27 @@ func _redeal_field(field_id: String, undo_steps: int, count_normal_reset: bool) 
 				if from_pile is Pile and not sync.can_local_interact(from_pile):
 					return false
 
-	# Отменяем именно выбранные записи поля через штатный Undo без расхода
-	# зарядов. Записи другого поля остаются в истории и не затрагиваются.
+	# Отменяем выбранные записи поля без расхода зарядов и без публикации
+	# промежуточных состояний в интерфейс / сетевую синхронизацию.
+	_batch_redeal_in_progress = true
 	for step_index in range(undo_steps):
 		if not undo(false, field_id):
+			_batch_redeal_in_progress = false
 			push_warning("GameManager: сброс прерван — не удалось отменить ход %d." % (step_index + 1))
+			history_changed.emit(history.size())
+			_emit_statistics()
+			_emit_board_counts()
+			_check_state()
 			return false
 
-	# Перетасовываем только STOCK / WASTE / TABLEAU. Foundation сохраняется.
+	# Перетасовываем только активные стопки. Собранные ряды не трогаем.
 	var pool: Array[Card] = []
-	for p in [waste] + tableau + [stock]:
-		if p == null:
-			continue
+	var active_piles: Array[Pile] = []
+	if waste != null:
+		active_piles.append(waste)
+	active_piles.append_array(tableau)
+	active_piles.append(stock)
+	for p in active_piles:
 		for c in p.cards.duplicate():
 			pool.append(c)
 	pool.shuffle()
@@ -693,13 +836,37 @@ func _redeal_field(field_id: String, undo_steps: int, count_normal_reset: bool) 
 		c.set_face_up(false)
 		stock.add_card(c)
 
-	for row in tableau.size():
-		for col in range(row, tableau.size()):
-			if stock.cards.is_empty():
-				break
-			var card: Card = stock.cards.back()
-			card.set_face_up(col == row)
-			tableau[col].add_card(card)
+	if rules is KlondikeRules:
+		for row in range(tableau.size()):
+			for col in range(row, tableau.size()):
+				if stock.cards.is_empty():
+					break
+				var card: Card = stock.cards.back()
+				card.set_face_up(col == row)
+				tableau[col].add_card(card)
+	else:
+		var spider_rules := rules as SpiderRules
+		var layout_settings := spider_rules._get_layout_settings()
+		var cards_per_column: Array[int] = []
+		var max_rows := 0
+		for col in range(tableau.size()):
+			var amount := int(layout_settings.get_cards_in_column(col, tableau.size()))
+			cards_per_column.append(amount)
+			max_rows = maxi(max_rows, amount)
+		for row in range(max_rows):
+			for col in range(tableau.size()):
+				if row >= cards_per_column[col] or stock.cards.is_empty():
+					continue
+				var card: Card = stock.cards.back()
+				card.set_face_up(row == cards_per_column[col] - 1)
+				tableau[col].add_card(card)
+
+	# Повторно применяем состояние лицевой стороны после reparent/relayout.
+	for pile in active_piles:
+		for index in range(pile.cards.size()):
+			var should_be_face_up := pile.kind == PileMarker.Kind.TABLEAU and index == pile.cards.size() - 1
+			pile.cards[index].set_face_up(should_be_face_up)
+		pile.relayout()
 
 	# После перемешивания старые записи этого поля больше невалидны.
 	var keep: Array[MoveRecord] = []
@@ -710,7 +877,13 @@ func _redeal_field(field_id: String, undo_steps: int, count_normal_reset: bool) 
 
 	if count_normal_reset:
 		_add_field_stat(field_id, "normal_resets", 1)
+	elif protected_move_floor >= 0:
+		var updated_stats := get_field_stats(field_id)
+		updated_stats["deadend_protected_moves"] = protected_move_floor
+		field_stats[field_id] = updated_stats
 
+	_batch_redeal_in_progress = false
+	deadlocked_field = ""
 	field_verdicts.erase(field_id)
 	history_changed.emit(history.size())
 	_emit_statistics()
@@ -746,6 +919,34 @@ func _check_state() -> void:
 		# Клондайк: вместо has_moves — анализатор состояний по каждому полю.
 		_queue_analysis()
 		return
+
+	if rules is SpiderRules:
+		var spider_rules := rules as SpiderRules
+		var any_field_moves := false
+		var deadlocked_local_field := ""
+		var sync := NetworkMatchSync.find_in(get_tree())
+		var local_field := sync.field_of_slot(sync.local_slot) if sync != null else ""
+		for stock in get_piles(PileMarker.Kind.STOCK):
+			var field_id := get_field_id(stock)
+			var has_field_moves := spider_rules.field_has_moves(stock)
+			var verdict := KlondikePredictor.Verdict.PROGRESS if has_field_moves else KlondikePredictor.Verdict.DEAD_END
+			var info := {"verdict": verdict, "uncertain": false, "undo_steps_needed": 0}
+			var previous: Dictionary = field_verdicts.get(field_id, {})
+			field_verdicts[field_id] = info
+			if int(previous.get("verdict", -1)) != verdict:
+				field_verdict_changed.emit(field_id, verdict, info)
+			if has_field_moves:
+				any_field_moves = true
+			elif not GameSession.allow_deadend_reset and (sync == null or field_id == local_field):
+				deadlocked_local_field = field_id
+		if not deadlocked_local_field.is_empty():
+			finish_dead_end(deadlocked_local_field)
+			return
+		moves_state_changed.emit(any_field_moves)
+		if not any_field_moves:
+			no_moves_left.emit()
+		return
+
 	var can_move := rules.has_moves()
 	moves_state_changed.emit(can_move)
 	if not can_move:
@@ -845,6 +1046,8 @@ func _exit_tree() -> void:
 
 func _clear_board() -> void:
 	game_finished = false
+	deadlocked_field = ""
+	_batch_redeal_in_progress = false
 	_board_version += 1
 	_deal_token += 1
 	is_dealing = false

@@ -61,7 +61,9 @@ func _connect_game_manager() -> void:
 	if not game_manager.is_dealing and not game_manager.game_finished:
 		_begin_game_tracking()
 
-	if game_manager.game_finished and game_manager.rules != null and game_manager.rules.is_won():
+	if game_manager.game_finished and not game_manager.deadlocked_field.is_empty():
+		call_deferred("_on_game_lost", game_manager.winner_field)
+	elif game_manager.game_finished and game_manager.rules != null and game_manager.rules.is_won():
 		call_deferred("_on_game_won")
 
 
@@ -74,7 +76,10 @@ func _process(delta: float) -> void:
 		# Победа записывается синхронно сигналом game_won.
 		# Если игра закончилась без game_won — записываем поражение.
 		_result_recorded = true
-		GameStatistics.record_loss(int(game_manager.current_mode))
+		if _is_local_deadlock():
+			GameStatistics.record_deadlock(int(game_manager.current_mode), NetworkMatchSync.is_network_match())
+		else:
+			GameStatistics.record_loss(int(game_manager.current_mode), NetworkMatchSync.is_network_match())
 		return
 	_elapsed_seconds += delta
 
@@ -85,7 +90,7 @@ func _on_deal_finished() -> void:
 	# Новая раздача в той же сцене («Новая партия» из паузы): предыдущая партия,
 	# если её не доиграли, записывается поражением, и учёт начинается заново.
 	if _tracking_started and not _result_recorded:
-		GameStatistics.record_loss(int(game_manager.current_mode))
+		GameStatistics.record_loss(int(game_manager.current_mode), NetworkMatchSync.is_network_match())
 	_tracking_started = false
 	_result_recorded = false
 	victory_sequence_started = false
@@ -99,9 +104,11 @@ func _on_deal_finished() -> void:
 func _exit_tree() -> void:
 	if _preview_instance or not _tracking_started or _result_recorded:
 		return
-	if is_instance_valid(game_manager) and game_manager.moves_count > 0:
+	if is_instance_valid(game_manager) and not game_manager.deadlocked_field.is_empty():
+		_record_deadlock_result()
+	elif is_instance_valid(game_manager) and game_manager.moves_count > 0:
 		_result_recorded = true
-		GameStatistics.record_loss(int(game_manager.current_mode))
+		GameStatistics.record_loss(int(game_manager.current_mode), NetworkMatchSync.is_network_match())
 
 
 func _begin_game_tracking() -> void:
@@ -109,7 +116,7 @@ func _begin_game_tracking() -> void:
 		return
 	_elapsed_seconds = 0.0
 	_tracking_started = true
-	GameStatistics.record_started(int(game_manager.current_mode))
+	GameStatistics.record_started(int(game_manager.current_mode), NetworkMatchSync.is_network_match())
 
 
 func _record_win() -> void:
@@ -120,13 +127,14 @@ func _record_win() -> void:
 	_result_recorded = true
 	_tracking_started = false
 	if _is_network_loss():
-		GameStatistics.record_loss(int(game_manager.current_mode))
+		GameStatistics.record_loss(int(game_manager.current_mode), NetworkMatchSync.is_network_match())
 		return
 	GameStatistics.record_win(
 		int(game_manager.current_mode),
 		int(game_manager.moves_count),
 		roundi(_elapsed_seconds),
-		int(game_manager.undo_count)
+		int(game_manager.undo_count),
+		NetworkMatchSync.is_network_match()
 	)
 
 
@@ -143,9 +151,31 @@ func _is_network_loss() -> bool:
 	return sync != null and not winner.is_empty() and winner != local_field
 
 
+func _is_local_deadlock() -> bool:
+	if not is_instance_valid(game_manager) or game_manager.deadlocked_field.is_empty():
+		return false
+	var sync := NetworkMatchSync.find_in(get_tree())
+	if sync == null:
+		return true
+	return game_manager.deadlocked_field == sync.field_of_slot(sync.local_slot)
+
+
+func _record_deadlock_result() -> void:
+	if _result_recorded or not is_instance_valid(game_manager):
+		return
+	_result_recorded = true
+	_tracking_started = false
+	GameStatistics.record_deadlock(
+		int(game_manager.current_mode),
+		NetworkMatchSync.is_network_match()
+	)
+
+
 func _result_text() -> String:
 	if not is_instance_valid(game_manager):
 		return ""
+	if _is_local_deadlock():
+		return "Партия завершилась тупиком. Результат учтён отдельно от побед и поражений."
 	if not game_manager.surrendered_field.is_empty():
 		return "Партия сдана: окончательный тупик." if _is_network_loss() else "Соперник сдался."
 	if _is_network_loss():
@@ -165,10 +195,12 @@ func _on_game_lost(_winner_field: String) -> void:
 	if victory_sequence_started:
 		return
 	victory_sequence_started = true
-	if _is_network_loss():
+	if _is_local_deadlock():
+		_record_deadlock_result()
+	elif _is_network_loss():
 		if not _result_recorded and is_instance_valid(game_manager):
 			_result_recorded = true
-			GameStatistics.record_loss(int(game_manager.current_mode))
+			GameStatistics.record_loss(int(game_manager.current_mode), NetworkMatchSync.is_network_match())
 	else:
 		_record_win()
 	_block_gameplay_mouse()
@@ -387,7 +419,7 @@ func _show_victory_window() -> void:
 	var lost := _is_network_loss()
 
 	var title := Label.new()
-	title.text = "ПОРАЖЕНИЕ" if lost else "ПОБЕДА!"
+	title.text = "ТУПИК" if _is_local_deadlock() else ("ПОРАЖЕНИЕ" if lost else "ПОБЕДА!")
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	title.add_theme_font_size_override("font_size", 36)
 	title.add_theme_color_override(

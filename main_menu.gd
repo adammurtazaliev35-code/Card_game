@@ -37,6 +37,7 @@ var _ms_draw_box: VBoxContainer
 var _ms_draw_one: Button
 var _ms_draw_three: Button
 var _ms_rules_box: VBoxContainer
+var _ms_reset_toggle: CheckButton
 
 
 func _ready() -> void:
@@ -208,6 +209,7 @@ func _on_play() -> void:
 	GameSession.is_multiplayer = false
 
 	var mode := GameSession.mode if GameSession.mode != 0 else MODE_KLONDIKE
+	GameSession.allow_deadend_reset = GameSession.get_deadend_reset_allowed(mode)
 	var path: String = str(GameSession.LEVEL_SCENES.get(mode, ""))
 	if path.is_empty() or not ResourceLoader.exists(path):
 		push_error("Главное меню: сцена уровня не найдена: '%s' (режим %d)" % [path, mode])
@@ -256,6 +258,7 @@ func _close_modes() -> void:
 
 func _select_mode(mode: int) -> void:
 	GameSession.mode = mode
+	GameSession.allow_deadend_reset = GameSession.get_deadend_reset_allowed(mode)
 	_update_mode_label()
 	_update_diff_button()
 	_update_layout_selector()
@@ -340,6 +343,13 @@ func _build_mode_settings_ui() -> void:
 	v.add_child(_section_label("Раскладка стола", 18, Color("#a8957a")))
 	_layout_selector.reparent(v)
 
+	v.add_child(_section_label("Тупиковый сброс", 18, Color("#a8957a")))
+	_ms_reset_toggle = CheckButton.new()
+	_ms_reset_toggle.text = "Разрешить сброс при тупике"
+	_ms_reset_toggle.add_theme_color_override("font_color", Color("#f3e6c8"))
+	_ms_reset_toggle.toggled.connect(_on_deadend_reset_toggled)
+	v.add_child(_ms_reset_toggle)
+
 	# Доп. правила для Клондайка по 3 карты (перенесены переключатели)
 	_ms_rules_box = VBoxContainer.new()
 	_ms_rules_box.add_theme_constant_override("separation", 6)
@@ -400,6 +410,8 @@ func _refresh_mode_settings() -> void:
 	_shuffle_toggle.disabled = not draw_three
 	_conveyor_toggle.set_pressed_no_signal(GameSession.waste_conveyor_enabled)
 	_shuffle_toggle.set_pressed_no_signal(GameSession.shuffle_waste_on_recycle)
+	GameSession.allow_deadend_reset = GameSession.get_deadend_reset_allowed(mode)
+	_ms_reset_toggle.set_pressed_no_signal(GameSession.allow_deadend_reset)
 	_update_layout_selector()
 	_update_mode_settings_button()
 
@@ -417,6 +429,7 @@ func _update_mode_settings_button() -> void:
 		GameSession.BOARD_LAYOUT_RING: "кольцо",
 	}
 	parts.append(str(layout_names.get(GameSession.get_board_layout(mode), "")))
+	parts.append("сброс" if GameSession.get_deadend_reset_allowed(mode) else "без сброса")
 	_mode_settings_button.text = "Настройки режима · %s" % ", ".join(parts)
 
 
@@ -718,6 +731,12 @@ func _on_conveyor_toggled(enabled: bool) -> void:
 
 func _on_shuffle_toggled(enabled: bool) -> void:
 	GameSession.shuffle_waste_on_recycle = enabled
+
+
+func _on_deadend_reset_toggled(enabled: bool) -> void:
+	var mode_id := GameSession.mode if GameSession.mode != 0 else MODE_KLONDIKE
+	GameSession.set_deadend_reset_allowed(mode_id, enabled)
+	_update_mode_settings_button()
 
 
 func _update_rules_settings_button() -> void:

@@ -354,6 +354,10 @@ func has_moves() -> bool:
 	return false
 
 
+func field_has_moves(stock: Pile) -> bool:
+	return _field_has_moves(stock)
+
+
 func _field_has_moves(stock: Pile) -> bool:
 	var tableau := _field_tableau(stock)
 
