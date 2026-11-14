@@ -794,7 +794,7 @@ func _refresh_player_actions() -> void:
 			_update_player_action_set(ui, ui.get("actions", {}))
 		if not ring_ui.is_empty():
 			_update_player_action_set(player_one_ui, ring_ui.get("actions", {}))
-	_refresh_camera_action_hud()
+	refresh_camera_action_hud()
 
 
 func _update_player_action_set(ui: Dictionary, actions: Dictionary) -> void:
@@ -854,7 +854,7 @@ func _setup_camera_action_hud() -> void:
 	(camera_action_hud_p1["reset"] as Button).pressed.connect(_on_camera_action_hud_reset.bind(player_one_ui))
 	(camera_action_hud_p2["hint"] as Button).pressed.connect(_on_player_hint.bind(player_two_ui))
 	(camera_action_hud_p2["reset"] as Button).pressed.connect(_on_camera_action_hud_reset.bind(player_two_ui))
-	_refresh_camera_action_hud()
+	refresh_camera_action_hud()
 
 
 func _create_camera_action_hud_player(parent: HBoxContainer, slot: int) -> Dictionary:
