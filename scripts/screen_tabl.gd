@@ -121,6 +121,7 @@ var last_displayed_second := -1
 
 func _ready() -> void:
 	add_to_group("screens")
+	GameSettings.ensure_loaded()
 
 	# Переносим старые настройки ригов, чтобы обновление скрипта не сбросило координаты.
 	if single_board_position == Vector3.ZERO and classic_position != Vector3.ZERO:
