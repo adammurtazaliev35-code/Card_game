@@ -18,6 +18,9 @@ var _last_stock_click_ms := -100000
 var _dragging: Array[Card] = []     # [0] - ведущая карта, остальные тянутся за ней
 var _offsets: Array[Vector3] = []   # смещения остальных карт относительно ведущей
 
+var _hint_visual: Node3D
+var _hint_pulse: Tween
+
 
 func _ready() -> void:
 	add_to_group("card_manager")
@@ -51,23 +54,105 @@ func _hint_field_id() -> String:
 	return ids[0] if not ids.is_empty() else GameManager.FIELD_MAIN
 
 
-## Подсветка первого хода подсказки: карта (или колода) дважды «подпрыгивает».
-func _show_hint(entries: Array) -> void:
+## Показывает постоянную 3D-стрелку от карты-источника к целевой стопке.
+## Подсказка остаётся на столе, пока игрок не возьмёт карту или не нажмёт колоду.
+func show_hint(entries: Array) -> void:
+	_clear_hint()
 	if entries.is_empty():
 		return
+
 	var first: Dictionary = entries[0]
-	var pile: Pile = first.get("from_pile")
-	if pile == null or pile.cards.is_empty():
+	var source_pile := first.get("from_pile") as Pile
+	var target_pile := first.get("to_pile") as Pile
+	if not is_instance_valid(source_pile) or not is_instance_valid(target_pile):
 		return
-	var index := int(first.get("card_index", pile.cards.size() - 1))
-	var card: Card = pile.cards[clampi(index, 0, pile.cards.size() - 1)]
-	if not is_instance_valid(card) or card.visual == null:
+
+	var start_position := source_pile.global_position + Vector3.UP * 0.14
+	if not source_pile.cards.is_empty():
+		var card_index := int(first.get("card_index", source_pile.cards.size() - 1))
+		if card_index >= 0 and card_index < source_pile.cards.size():
+			var source_card := source_pile.cards[card_index] as Card
+			if is_instance_valid(source_card):
+				start_position = source_card.global_position + Vector3.UP * 0.14
+
+	var target_position := target_pile.global_position + Vector3.UP * 0.16
+	var direction := target_position - start_position
+	var distance := direction.length()
+	if distance < 0.06:
 		return
-	var home := card.visual.position
-	var tween := card.create_tween()
-	for _i in 2:
-		tween.tween_property(card.visual, "position", home + Vector3(0, 0.025, 0), 0.18).set_trans(Tween.TRANS_SINE)
-		tween.tween_property(card.visual, "position", home, 0.18).set_trans(Tween.TRANS_SINE)
+
+	var arrow_direction := direction / distance
+	var head_length := clampf(distance * 0.28, 0.035, 0.075)
+	var shaft_length := maxf(distance - head_length, 0.025)
+
+	_hint_visual = Node3D.new()
+	_hint_visual.name = "PredictorHintArrow"
+	add_child(_hint_visual)
+	_hint_visual.global_transform = Transform3D(
+		Basis(Quaternion(Vector3.UP, arrow_direction)),
+		start_position
+	)
+
+	var hint_material := StandardMaterial3D.new()
+	hint_material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	hint_material.albedo_color = Color("#F2C35B")
+	hint_material.emission_enabled = true
+	hint_material.emission = Color("#F2C35B")
+	hint_material.emission_energy_multiplier = 1.8
+
+	var shaft_mesh := CylinderMesh.new()
+	shaft_mesh.top_radius = 0.006
+	shaft_mesh.bottom_radius = 0.006
+	shaft_mesh.height = shaft_length
+	shaft_mesh.radial_segments = 8
+	var shaft := MeshInstance3D.new()
+	shaft.name = "ArrowShaft"
+	shaft.mesh = shaft_mesh
+	shaft.material_override = hint_material
+	shaft.position = Vector3.UP * (shaft_length * 0.5)
+	shaft.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	_hint_visual.add_child(shaft)
+
+	var head_mesh := CylinderMesh.new()
+	head_mesh.top_radius = 0.0
+	head_mesh.bottom_radius = 0.028
+	head_mesh.height = head_length
+	head_mesh.radial_segments = 8
+	var head := MeshInstance3D.new()
+	head.name = "ArrowHead"
+	head.mesh = head_mesh
+	head.material_override = hint_material
+	head.position = Vector3.UP * (shaft_length + head_length * 0.5)
+	head.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	_hint_visual.add_child(head)
+
+	_hint_pulse = create_tween().set_loops()
+	_hint_pulse.tween_property(
+		_hint_visual,
+		"scale",
+		Vector3(1.0, 1.12, 1.0),
+		0.45
+	).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
+	_hint_pulse.tween_property(
+		_hint_visual,
+		"scale",
+		Vector3.ONE,
+		0.45
+	).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
+
+
+func clear_hint() -> void:
+	_clear_hint()
+
+
+func _clear_hint() -> void:
+	if _hint_pulse != null and _hint_pulse.is_running():
+		_hint_pulse.kill()
+	_hint_pulse = null
+
+	if is_instance_valid(_hint_visual):
+		_hint_visual.queue_free()
+	_hint_visual = null
 
 
 ## Защита раздачи из колоды: не во время раздачи, не чаще stock_click_cooldown,
@@ -113,8 +198,9 @@ func _unhandled_input(event: InputEvent) -> void:
 				game_manager.undo()
 		# H — подсказка (тратит одну подсказку из лимита партии)
 		elif event.keycode == KEY_H and _dragging.is_empty() and game_manager:
-			var entries := game_manager.request_hint(_hint_field_id())
-			_show_hint(entries)
+			# GameManager.emit(hint_ready) направит найденный ход в Screens,
+			# откуда стрелка попадёт обратно в этот CardManager.
+			game_manager.request_hint(_hint_field_id())
 
 
 func _process(delta: float) -> void:
@@ -153,7 +239,8 @@ func _try_pick_card(screen_pos: Vector2) -> void:
 		# пустая колода: клик по самой зоне стопки
 		var pile := _resolve_pile(_ray(screen_pos, LAYER_PILES).get("collider"))
 		if pile != null and _can_interact(pile) and _stock_click_allowed(pile):
-			rules.on_pile_clicked(pile)
+			if rules.on_pile_clicked(pile):
+				_clear_hint()
 		return
 
 	# Сеть: поле соперника только для просмотра.
@@ -162,16 +249,18 @@ func _try_pick_card(screen_pos: Vector2) -> void:
 
 	# клик по колоде: правила сами решат, что делать (взять карту / перевернуть сброс)
 	if card.pile is Pile and (card.pile as Pile).kind == PileMarker.Kind.STOCK:
-		if _stock_click_allowed(card.pile):
-			rules.on_pile_clicked(card.pile)
+		if _stock_click_allowed(card.pile) and rules.on_pile_clicked(card.pile):
+			_clear_hint()
 		return
 	if card.pile != null and rules.on_pile_clicked(card.pile):
+		_clear_hint()
 		return
 
 	var group := rules.get_group(card)
 	if group.is_empty():
 		return
 
+	_clear_hint()
 	_dragging = group
 	_offsets.clear()
 	for c in group:
@@ -210,6 +299,10 @@ func _drop_card(screen_pos: Vector2) -> void:
 	var feedback := _feedback()
 	if feedback != null:
 		feedback.clear_local_selected_card(group[0], moved)
+
+
+func _exit_tree() -> void:
+	_clear_hint()
 
 
 func _cancel_drag() -> void:

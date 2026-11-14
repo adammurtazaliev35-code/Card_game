@@ -525,11 +525,16 @@ func describe_hint(hint: Array) -> Array:
 	for mv in hint:
 		var entry := {"move": mv}
 		if mv.has("draw"):
-			entry["text"] = "взять из колоды"
+			# Подсказка показывает направление от верхней карты Stock к Waste.
 			entry["from_pile"] = piles[IDX_STOCK]
+			entry["to_pile"] = piles[IDX_WASTE]
+			entry["card_index"] = (piles[IDX_STOCK] as Pile).cards.size() - 1
 		elif mv.has("recycle"):
-			entry["text"] = "перевернуть сброс в колоду"
-			entry["from_pile"] = piles[IDX_STOCK]   # переворот — это клик по пустой колоде
+			# При recycle игрок нажимает пустой Stock: карты возвращаются из Waste.
+			entry["from_pile"] = piles[IDX_WASTE]
+			entry["to_pile"] = piles[IDX_STOCK]
+			var waste_size := (piles[IDX_WASTE] as Pile).cards.size()
+			entry["card_index"] = 0 if waste_play_front else waste_size - 1
 		else:
 			var src: Array = state[mv["from"]]
 			var from_front := int(mv["from"]) == IDX_WASTE and waste_play_front
@@ -538,7 +543,6 @@ func describe_hint(hint: Array) -> Array:
 			entry["from_pile"] = piles[mv["from"]]
 			entry["to_pile"] = piles[mv["to"]]
 			entry["card_index"] = lead_index
-			entry["text"] = "%s → %s" % [card_text(lead), _pile_text(int(mv["to"]))]
 		out.append(entry)
 		state = _apply(state, mv)
 	return out
