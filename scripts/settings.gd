@@ -16,6 +16,9 @@ var _track_label: Label
 var _theme_status: Label
 var _theme_buttons: Dictionary = {}
 var _display_selector: OptionButton
+var _display_apply_button: Button
+var _display_status: Label
+var _pending_display_mode := ""
 var _voice_volume: HSlider
 var _voice_sensitivity: HSlider
 var _voice_quality: OptionButton
@@ -155,7 +158,7 @@ func _build_tabs() -> void:
 		_prepare_tab_page(tabs, display_page)
 		display_page.add_theme_constant_override("separation", 16)
 		display_page.add_child(_label("РЕЖИМ ОТОБРАЖЕНИЯ", 22, GameSettings.get_color("gold")))
-		var display_description := _label("Выбери, как игра будет отображаться на мониторе. Изменение применяется сразу.", 14, GameSettings.get_color("muted"))
+		var display_description := _label("Выбери режим отображения. Смена произойдёт только после нажатия «Применить».", 14, GameSettings.get_color("muted"))
 		display_description.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		display_page.add_child(display_description)
 		var display_row := HBoxContainer.new()
@@ -173,12 +176,21 @@ func _build_tabs() -> void:
 		_display_selector.set_item_metadata(1, GameSettings.DISPLAY_MODE_BORDERLESS)
 		_display_selector.add_item("Полный экран")
 		_display_selector.set_item_metadata(2, GameSettings.DISPLAY_MODE_FULLSCREEN)
-		_display_selector.select(maxi(0, GameSettings.DISPLAY_MODES.find(GameSettings.display_mode)))
-		_display_selector.item_selected.connect(func(index: int):
-			GameSettings.set_display_mode(str(_display_selector.get_item_metadata(index)))
-		)
+		_pending_display_mode = GameSettings.display_mode
+		_display_selector.select(maxi(0, GameSettings.DISPLAY_MODES.find(_pending_display_mode)))
+		_display_selector.item_selected.connect(_on_display_mode_selected)
 		display_row.add_child(_display_selector)
 		display_page.add_child(display_row)
+
+		_display_apply_button = _button("Применить", _on_display_apply_pressed)
+		_display_apply_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		_display_apply_button.disabled = true
+		display_page.add_child(_display_apply_button)
+
+		_display_status = _label("", 14, GameSettings.get_color("muted"))
+		_display_status.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
+		_display_status.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		display_page.add_child(_display_status)
 
 	var theme_page := VBoxContainer.new()
 	theme_page.name = "Тематика"
@@ -262,7 +274,12 @@ func refresh() -> void:
 	if _action_hud != null:
 		_action_hud.set_pressed_no_signal(GameSettings.show_game_action_hud)
 	if _display_selector != null:
-		_display_selector.select(maxi(0, GameSettings.DISPLAY_MODES.find(GameSettings.display_mode)))
+		_pending_display_mode = GameSettings.display_mode
+		_display_selector.select(maxi(0, GameSettings.DISPLAY_MODES.find(_pending_display_mode)))
+	if _display_apply_button != null:
+		_display_apply_button.disabled = true
+	if _display_status != null:
+		_display_status.text = ""
 	if _voice_volume != null:
 		_voice_volume.set_value_no_signal(GameSettings.voice_volume)
 	if _voice_sensitivity != null:
@@ -308,6 +325,35 @@ func _refresh_theme_cards() -> void:
 		button.add_theme_stylebox_override("hover", _box(base.lightened(0.12), border.lightened(0.12)))
 		button.add_theme_color_override("font_color", palette["text"])
 		button.add_theme_font_size_override("font_size", 17)
+
+
+func _on_display_mode_selected(index: int) -> void:
+	if _display_selector == null:
+		return
+	_pending_display_mode = str(_display_selector.get_item_metadata(index))
+	var has_pending_change := _pending_display_mode != GameSettings.display_mode
+	if _display_apply_button != null:
+		_display_apply_button.disabled = not has_pending_change
+	if _display_status != null:
+		_display_status.text = (
+			"Нажми «Применить», чтобы переключить режим."
+			if has_pending_change
+			else "Этот режим уже используется."
+		)
+
+
+func _on_display_apply_pressed() -> void:
+	if _pending_display_mode.is_empty():
+		return
+	if _pending_display_mode == GameSettings.display_mode:
+		if _display_apply_button != null:
+			_display_apply_button.disabled = true
+		return
+	GameSettings.set_display_mode(_pending_display_mode)
+	if _display_apply_button != null:
+		_display_apply_button.disabled = true
+	if _display_status != null:
+		_display_status.text = "Режим отображения применён."
 
 
 func _on_music_changed(value: float) -> void:
