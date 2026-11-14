@@ -164,7 +164,7 @@ func _create_hint_arrow(source_position: Vector3, target_position: Vector3) -> v
 	_hint_visual_root.add_child(shaft)
 
 	var head := MeshInstance3D.new()
-	var head_mesh := ConeMesh.new()
+	var head_mesh := CylinderMesh.new()
 	head_mesh.bottom_radius = 0.12
 	head_mesh.top_radius = 0.0
 	head_mesh.height = head_length
