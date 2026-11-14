@@ -915,8 +915,11 @@ func refresh_camera_action_hud() -> void:
 		return
 
 	var show_p1 := not network_session_active or local_player_slot == 1
-	var show_p2 := display_mode == DisplayMode.MULTIPLAYER and (
-		not network_session_active or local_player_slot == 2
+	# В сетевой партии показываем HUD именно локального слота, в том числе
+	# для второго игрока кольцевой раскладки (DisplayMode.RING).
+	var show_p2 := (
+		(display_mode == DisplayMode.MULTIPLAYER and not network_session_active)
+		or (network_session_active and local_player_slot == 2)
 	)
 	(camera_action_hud_p1["root"] as Control).visible = show_p1
 	(camera_action_hud_p2["root"] as Control).visible = show_p2
