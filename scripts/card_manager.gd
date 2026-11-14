@@ -18,9 +18,7 @@ var _last_stock_click_ms := -100000
 var _dragging: Array[Card] = []     # [0] - ведущая карта, остальные тянутся за ней
 var _offsets: Array[Vector3] = []   # смещения остальных карт относительно ведущей
 var _hint_visual_root: Node3D
-var _hint_card: Card
-var _hint_card_home := Vector3.ZERO
-var _hint_card_tween: Tween
+var _hint_animation_tween: Tween
 
 
 func _ready() -> void:
@@ -65,146 +63,109 @@ func clear_hint() -> void:
 	_clear_hint_visual()
 
 
-## Визуальная подсказка: выбранная карта пульсирует, стрелка ведёт к стопке-цели.
-## Стрелка и пульсация остаются до первого захвата карты игроком.
+## Визуальная подсказка: копия карты летит к целевой стопке и остаётся видимой до действия игрока или тайм-аута.
 func _show_hint(entries: Array) -> void:
 	_clear_hint_visual()
-	if entries.is_empty():
+	if entries.is_empty() or game_manager == null:
 		return
+
 	var first: Dictionary = entries[0]
+	var move: Dictionary = first.get("move", {})
 	var source := first.get("from_pile") as Pile
+	var target := first.get("to_pile") as Pile
 	if not is_instance_valid(source):
 		return
-	if first.has("draw") or first.has("recycle") or source.cards.is_empty():
-		_create_hint_marker(source)
+
+	# В predictor тип действия draw/recycle лежит внутри вложенного словаря move.
+	# Для таких действий цель и источник определяем по типу действия.
+	var card_source := source
+	if move.has("draw"):
+		target = _find_field_pile(source, PileMarker.Kind.WASTE)
+	elif move.has("recycle"):
+		card_source = _find_field_pile(source, PileMarker.Kind.WASTE)
+		target = source
+
+	if not is_instance_valid(card_source) or not is_instance_valid(target):
+		return
+	if card_source.cards.is_empty():
 		return
 
-	var index := clampi(int(first.get("card_index", source.cards.size() - 1)), 0, source.cards.size() - 1)
-	var card := source.cards[index] as Card
-	if not is_instance_valid(card) or card.visual == null:
-		_create_hint_marker(source)
+	var index := clampi(
+		int(first.get("card_index", card_source.cards.size() - 1)),
+		0,
+		card_source.cards.size() - 1
+	)
+	var card := card_source.cards[index] as Card
+	if not is_instance_valid(card) or not is_instance_valid(card.visual):
 		return
 
-	_hint_card = card
-	_hint_card_home = card.visual.position
-	_hint_card_tween = card.create_tween()
-	_hint_card_tween.set_loops()
-	_hint_card_tween.tween_property(
-		card.visual, "position", _hint_card_home + Vector3(0.0, 0.035, 0.0), 0.42
-	).set_trans(Tween.TRANS_SINE)
-	_hint_card_tween.tween_property(
-		card.visual, "position", _hint_card_home, 0.42
-	).set_trans(Tween.TRANS_SINE)
-
-	var target := first.get("to_pile") as Pile
-	if is_instance_valid(target):
-		_create_hint_arrow(card.global_position, target.global_position)
-	else:
-		_create_hint_marker(source)
+	_play_hint_card_flight(card, target)
 
 
-func _make_hint_material() -> StandardMaterial3D:
-	var material := StandardMaterial3D.new()
-	material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	material.albedo_color = Color("#F2C35B")
-	material.emission_enabled = true
-	material.emission = Color("#F2C35B")
-	material.emission_energy_multiplier = 2.2
-	return material
+func _find_field_pile(reference: Pile, wanted_kind: PileMarker.Kind) -> Pile:
+	if not is_instance_valid(reference) or game_manager == null:
+		return null
+	var field_id := game_manager.get_field_id(reference)
+	for pile in game_manager.piles:
+		if is_instance_valid(pile) and pile.kind == wanted_kind and game_manager.get_field_id(pile) == field_id:
+			return pile
+	return null
 
 
-func _create_hint_marker(pile: Pile) -> void:
-	if not is_instance_valid(pile):
+func _play_hint_card_flight(card: Card, target: Pile) -> void:
+	if not is_instance_valid(card) or not is_instance_valid(target):
 		return
+
+	# Отдельная копия визуала не двигает настоящую карту и не вмешивается
+	# в её физику, стопку или историю ходов.
 	_hint_visual_root = Node3D.new()
-	_hint_visual_root.name = "HintPileMarker"
+	_hint_visual_root.name = "HintCardFlight"
 	_hint_visual_root.top_level = true
 	add_child(_hint_visual_root)
-	_hint_visual_root.global_position = pile.global_position + Vector3.UP * 0.22
+	_hint_visual_root.global_transform = card.global_transform
 
-	var ring := MeshInstance3D.new()
-	var ring_mesh := TorusMesh.new()
-	ring_mesh.inner_radius = 0.13
-	ring_mesh.outer_radius = 0.19
-	ring.mesh = ring_mesh
-	ring.material_override = _make_hint_material()
-	_hint_visual_root.add_child(ring)
-	_start_hint_pulse()
-
-
-func _create_hint_arrow(source_position: Vector3, target_position: Vector3) -> void:
-	var start := source_position + Vector3.UP * 0.34
-	var finish := target_position + Vector3.UP * 0.34
-	var direction := finish - start
-	direction.y = 0.0
-	var length := direction.length()
-	if length < 0.12:
+	var visual_copy := card.visual.duplicate() as Marker3D
+	if visual_copy == null:
+		_hint_visual_root.queue_free()
+		_hint_visual_root = null
 		return
+	visual_copy.transform = card.visual.transform
+	_hint_visual_root.add_child(visual_copy)
 
-	_hint_visual_root = Node3D.new()
-	_hint_visual_root.name = "HintMoveArrow"
-	_hint_visual_root.top_level = true
-	add_child(_hint_visual_root)
-	_hint_visual_root.global_position = start
-	_hint_visual_root.look_at(Vector3(finish.x, start.y, finish.z), Vector3.UP)
+	var destination := target.global_position + Vector3.UP * 0.045
+	if not target.cards.is_empty():
+		destination = target.cards.back().global_position + Vector3.UP * 0.045
 
-	var material := _make_hint_material()
-	var head_length := minf(0.24, length * 0.35)
-	var shaft_length := maxf(0.06, length - head_length)
-
-	var shaft := MeshInstance3D.new()
-	var shaft_mesh := CylinderMesh.new()
-	shaft_mesh.top_radius = 0.035
-	shaft_mesh.bottom_radius = 0.035
-	shaft_mesh.height = shaft_length
-	shaft.mesh = shaft_mesh
-	shaft.rotation.x = -PI * 0.5
-	shaft.position.z = -shaft_length * 0.5
-	shaft.material_override = material
-	_hint_visual_root.add_child(shaft)
-
-	var head := MeshInstance3D.new()
-	var head_mesh := ConeMesh.new()
-	head_mesh.bottom_radius = 0.12
-	head_mesh.top_radius = 0.0
-	head_mesh.height = head_length
-	head.mesh = head_mesh
-	head.rotation.x = -PI * 0.5
-	head.position.z = -(shaft_length + head_length * 0.5)
-	head.material_override = material
-	_hint_visual_root.add_child(head)
-
-	var target_ring := MeshInstance3D.new()
-	var target_mesh := TorusMesh.new()
-	target_mesh.inner_radius = 0.12
-	target_mesh.outer_radius = 0.18
-	target_ring.mesh = target_mesh
-	target_ring.position.z = -length
-	target_ring.material_override = material
-	_hint_visual_root.add_child(target_ring)
-	_start_hint_pulse()
+	# Перелёт занимает около половины секунды, затем карта остаётся в точке
+	# назначения до общего лимита показа в 5 секунд.
+	_hint_animation_tween = create_tween()
+	_hint_animation_tween.tween_property(
+		_hint_visual_root,
+		"global_position",
+		destination,
+		0.55
+	).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
+	_hint_animation_tween.tween_interval(4.45)
+	_hint_animation_tween.tween_callback(_finish_hint_visual)
 
 
-func _start_hint_pulse() -> void:
-	if not is_instance_valid(_hint_visual_root):
-		return
-	var pulse := create_tween()
-	pulse.set_loops()
-	pulse.tween_property(_hint_visual_root, "scale", Vector3.ONE * 1.10, 0.45).set_trans(Tween.TRANS_SINE)
-	pulse.tween_property(_hint_visual_root, "scale", Vector3.ONE, 0.45).set_trans(Tween.TRANS_SINE)
-
-
-func _clear_hint_visual() -> void:
-	if _hint_card_tween != null and _hint_card_tween.is_valid():
-		_hint_card_tween.kill()
-	_hint_card_tween = null
-	if is_instance_valid(_hint_card) and is_instance_valid(_hint_card.visual):
-		_hint_card.visual.position = _hint_card_home
-	_hint_card = null
+func _finish_hint_visual() -> void:
+	# Callback вызывается самим Tween по завершении, поэтому здесь не kill()им
+	# выполняющуюся анимацию изнутри её же шага.
+	_hint_animation_tween = null
 	if is_instance_valid(_hint_visual_root):
 		_hint_visual_root.queue_free()
 	_hint_visual_root = null
 
+
+func _clear_hint_visual() -> void:
+	if _hint_animation_tween != null and _hint_animation_tween.is_valid():
+		_hint_animation_tween.kill()
+	_hint_animation_tween = null
+
+	if is_instance_valid(_hint_visual_root):
+		_hint_visual_root.queue_free()
+	_hint_visual_root = null
 
 ## Защита раздачи из колоды: не во время раздачи, не чаще stock_click_cooldown,
 ## и (в сети, общее поле) не пока применяется чужая раздача.
