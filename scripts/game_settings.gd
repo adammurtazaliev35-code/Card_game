@@ -153,6 +153,7 @@ static func ensure_loaded() -> void:
 	if voice_input_device.strip_edges().is_empty():
 		voice_input_device = "Default"
 	AudioServer.input_device = voice_input_device
+	voice_input_device = AudioServer.input_device
 	_ensure_bus(BUS_MUSIC)
 	_ensure_bus(BUS_SFX)
 	apply_audio()
@@ -448,6 +449,7 @@ static func set_voice_input_device(device_name: String) -> void:
 	if voice_input_device.is_empty():
 		voice_input_device = "Default"
 	AudioServer.input_device = voice_input_device
+	voice_input_device = AudioServer.input_device
 	save()
 
 
