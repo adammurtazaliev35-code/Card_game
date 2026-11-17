@@ -43,7 +43,7 @@ func _build_tabs() -> void:
 	tabs.name = "SettingsTabs"
 	tabs.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	tabs.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	tabs.custom_minimum_size = Vector2(540, 400)
+	tabs.custom_minimum_size = Vector2.ZERO
 	tabs.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	tabs.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	tabs.add_theme_font_size_override("font_size", 18)
@@ -117,9 +117,11 @@ func _build_tabs() -> void:
 	var voice_scroll := ScrollContainer.new()
 	voice_scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	voice_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	voice_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	voice_page.add_child(voice_scroll)
 	var voice_content := VBoxContainer.new()
 	voice_content.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	voice_content.custom_minimum_size = Vector2.ZERO
 	voice_content.add_theme_constant_override("separation", 16)
 	voice_scroll.add_child(voice_content)
 	voice_content.add_child(_label("ГОЛОСОВАЯ СВЯЗЬ", 22, GameSettings.get_color("gold")))
@@ -131,13 +133,13 @@ func _build_tabs() -> void:
 	voice_content.add_child(voice_description)
 	_voice_volume = _add_slider(
 		voice_content, "Громкость собеседника", GameSettings.voice_volume,
-		_on_voice_volume_changed, _on_voice_settings_released
+		_on_voice_volume_changed, _on_voice_settings_released, 0.0, 1.0, 0.01, true
 	)
 	_voice_volume.focus_exited.connect(_on_voice_settings_released)
 	_voice_sensitivity = _add_slider(
 		voice_content, "Чувствительность микрофона", GameSettings.voice_input_threshold,
 		_on_voice_sensitivity_changed, _on_voice_settings_released,
-		0.001, 0.1, 0.001
+		0.001, 0.1, 0.001, true
 	)
 	_voice_sensitivity.focus_exited.connect(_on_voice_settings_released)
 
@@ -153,7 +155,8 @@ func _build_tabs() -> void:
 	_add_voice_quality_selector(voice_content)
 	if GameSettings.is_voice_key_binding_supported():
 		_voice_key_button = _button(_voice_key_text(), _on_voice_key_capture_pressed)
-		_voice_key_button.custom_minimum_size = Vector2(260, 46)
+		_voice_key_button.custom_minimum_size = Vector2(0, 46)
+		_voice_key_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		voice_content.add_child(_voice_key_button)
 		var ptt_hint := _label("Удерживай выбранную клавишу, чтобы говорить.", 14, GameSettings.get_color("muted"))
 		ptt_hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
@@ -265,7 +268,7 @@ func _prepare_tab_page(tabs: TabContainer, page_content: Control) -> void:
 	margin.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	# Все вкладки получают одинаковую рабочую область: высота содержимого
 	# конкретной вкладки больше не меняет геометрию TabContainer при переключении.
-	margin.custom_minimum_size = Vector2(540, 400)
+	margin.custom_minimum_size = Vector2.ZERO
 	for side in ["left", "right"]:
 		margin.add_theme_constant_override("margin_" + side, 24)
 	for side in ["top", "bottom"]:
@@ -400,16 +403,15 @@ func _on_voice_settings_released() -> void:
 	GameSettings.save()
 	
 func _add_voice_input_device_selector(parent: VBoxContainer) -> void:
-	var row := HBoxContainer.new()
-	row.add_theme_constant_override("separation", 14)
-	var caption := _label("Микрофон", 21, GameSettings.get_color("text"))
+	var row := VBoxContainer.new()
+	row.add_theme_constant_override("separation", 6)
+	var caption := _label("Микрофон", 19, GameSettings.get_color("text"))
 	caption.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
-	caption.custom_minimum_size = Vector2(160, 0)
 	row.add_child(caption)
 
 	_voice_input_device_selector = OptionButton.new()
 	_voice_input_device_selector.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_voice_input_device_selector.custom_minimum_size = Vector2(220, 44)
+	_voice_input_device_selector.custom_minimum_size = Vector2(0, 44)
 	_voice_input_device_selector.add_item("Системное устройство (по умолчанию)")
 	_voice_input_device_selector.set_item_metadata(0, "Default")
 	var devices: PackedStringArray = AudioServer.get_input_device_list()
@@ -454,15 +456,14 @@ func _voice_input_hint_text() -> String:
 
 
 func _add_voice_quality_selector(parent: VBoxContainer) -> void:
-	var row := HBoxContainer.new()
-	row.add_theme_constant_override("separation", 14)
-	var caption := _label("Качество голоса", 21, GameSettings.get_color("text"))
+	var row := VBoxContainer.new()
+	row.add_theme_constant_override("separation", 6)
+	var caption := _label("Качество голоса", 19, GameSettings.get_color("text"))
 	caption.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
-	caption.custom_minimum_size = Vector2(160, 0)
 	row.add_child(caption)
 	_voice_quality = OptionButton.new()
 	_voice_quality.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_voice_quality.custom_minimum_size = Vector2(220, 44)
+	_voice_quality.custom_minimum_size = Vector2(0, 44)
 	_voice_quality.add_item("Очень высокое")
 	_voice_quality.add_item("Высокое")
 	_voice_quality.add_item("Среднее")
@@ -561,20 +562,22 @@ func _small_button(text: String, on_press: Callable) -> Button:
 
 func _add_slider(
 	parent: VBoxContainer, caption: String, value: float,	on_change: Callable, on_release: Callable,
-	minimum: float = 0.0, maximum: float = 1.0, step_value: float = 0.01
+	minimum: float = 0.0, maximum: float = 1.0, step_value: float = 0.01,
+	stacked: bool = false
 ) -> HSlider:
-	var row := HBoxContainer.new()
-	row.add_theme_constant_override("separation", 14)
-	var label := _label(caption, 21, GameSettings.get_color("text"))
+	var row: BoxContainer = VBoxContainer.new() if stacked else HBoxContainer.new()
+	row.add_theme_constant_override("separation", 6 if stacked else 14)
+	var label := _label(caption, 19 if stacked else 21, GameSettings.get_color("text"))
 	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
-	label.custom_minimum_size = Vector2(160, 0)
+	if not stacked:
+		label.custom_minimum_size = Vector2(160, 0)
 	row.add_child(label)
 	var slider := HSlider.new()
 	slider.min_value = minimum
 	slider.max_value = maximum
 	slider.step = step_value
 	slider.value = value
-	slider.custom_minimum_size = Vector2(250, 30)
+	slider.custom_minimum_size = Vector2(0 if stacked else 250, 30)
 	slider.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	slider.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	var track := _box(GameSettings.get_color("button"), GameSettings.get_color("border"))
