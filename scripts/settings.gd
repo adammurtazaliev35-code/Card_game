@@ -117,7 +117,7 @@ func _build_tabs() -> void:
 	var voice_scroll := ScrollContainer.new()
 	voice_scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	voice_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	voice_content.add_child(voice_scroll)
+	voice_page.add_child(voice_scroll)
 	var voice_content := VBoxContainer.new()
 	voice_content.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	voice_content.add_theme_constant_override("separation", 16)
@@ -149,8 +149,8 @@ func _build_tabs() -> void:
 	sensitivity_hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	voice_content.add_child(sensitivity_hint)
 	if GameSettings.is_voice_key_binding_supported():
-		_add_voice_input_device_selector(voice_page)
-	_add_voice_quality_selector(voice_page)
+		_add_voice_input_device_selector(voice_content)
+	_add_voice_quality_selector(voice_content)
 	if GameSettings.is_voice_key_binding_supported():
 		_voice_key_button = _button(_voice_key_text(), _on_voice_key_capture_pressed)
 		_voice_key_button.custom_minimum_size = Vector2(260, 46)
