@@ -1306,6 +1306,8 @@ func _on_kicked(reason: String) -> void:
 	NetworkMatchState.player_two_name = "Игрок 2"
 	NetworkMatchState.player_one_id = -1
 	NetworkMatchState.player_two_id = -1
+	NetworkMatchState.host_client_id = -1
+	_room_host_client_id = -1
 	_in_lobby = false
 	_current_lobby_name = ""
 	_room_players.clear()
