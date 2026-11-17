@@ -47,6 +47,7 @@ func _build_tabs() -> void:
 	tabs.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	tabs.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	tabs.add_theme_font_size_override("font_size", 18)
+	tabs.add_theme_constant_override("h_separation", 8)
 
 	# The default TabContainer theme is square and grey. Give the tab strip and
 	# its content panel the same palette treatment as the rest of the settings UI.
@@ -114,16 +115,11 @@ func _build_tabs() -> void:
 	var voice_page := VBoxContainer.new()
 	voice_page.name = "Голосовой чат"
 	_prepare_tab_page(tabs, voice_page)
-	var voice_scroll := ScrollContainer.new()
-	voice_scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	voice_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	voice_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
-	voice_page.add_child(voice_scroll)
-	var voice_content := VBoxContainer.new()
-	voice_content.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	voice_content.custom_minimum_size = Vector2.ZERO
-	voice_content.add_theme_constant_override("separation", 16)
-	voice_scroll.add_child(voice_content)
+	voice_page.add_theme_constant_override("separation", 16)
+	voice_page.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	voice_page.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	voice_page.custom_minimum_size = Vector2.ZERO
+	var voice_content := voice_page
 	voice_content.add_child(_label("ГОЛОСОВАЯ СВЯЗЬ", 22, GameSettings.get_color("gold")))
 	var voice_description := _label(
 		"Выбери входной микрофон, настрой передачу голоса и громкость собеседника.", 14,
@@ -209,15 +205,11 @@ func _build_tabs() -> void:
 	var theme_page := VBoxContainer.new()
 	theme_page.name = "Тематика"
 	_prepare_tab_page(tabs, theme_page)
-	var theme_scroll := ScrollContainer.new()
-	theme_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
-	theme_scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	theme_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	theme_page.add_child(theme_scroll)
-	var theme_content := VBoxContainer.new()
-	theme_content.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	theme_content.add_theme_constant_override("separation", 12)
-	theme_scroll.add_child(theme_content)
+	theme_page.add_theme_constant_override("separation", 12)
+	theme_page.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	theme_page.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	theme_page.custom_minimum_size = Vector2.ZERO
+	var theme_content := theme_page
 	theme_content.add_child(_label("ЦВЕТОВАЯ ТЕМА", 22, GameSettings.get_color("gold")))
 	var description := _label("Выбери палитру интерфейса. Изменения применяются сразу и сохраняются автоматически.", 14, GameSettings.get_color("muted"))
 	description.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
