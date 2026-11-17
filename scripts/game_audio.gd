@@ -11,7 +11,6 @@ extends Node
 ##   GameAudio.get_instance(get_tree()).play_music()
 ##   GameAudio.card(get_tree())
 
-const MUSIC_NAME := "music"
 const CARD_NAME := "card"
 ## Плейлист: все треки из этой папки (ogg/mp3/wav) по алфавиту.
 ## Другие папки проекта не сканируются для музыки, чтобы не смешивать её со звуками.
