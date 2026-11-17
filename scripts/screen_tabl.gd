@@ -920,7 +920,7 @@ func _create_camera_action_hud_player(parent: VBoxContainer, slot: int) -> Dicti
 	parent.add_child(row)
 
 	var hint := _create_camera_action_button("✦", "Подсказка")
-	var reset := _create_camera_action_button("↻", "Обычный сброс")
+	var reset := _create_camera_action_button("↻", "Перетасовка")
 	row.add_child(hint)
 	row.add_child(reset)
 	return {"root": row, "hint": hint, "reset": reset}
@@ -1249,6 +1249,8 @@ func _create_deadend_overlay(panel: Control) -> Dictionary:
 	var overlay := Control.new()
 	overlay.name = "DeadEndOverlay"
 	overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	# Полноэкранный слой не должен перехватывать клики по остальным кнопкам
+	# основного интерфейса. Сами кнопки тупика остаются интерактивными.
 	overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	overlay.visible = false
 	panel.add_child(overlay)
@@ -1318,7 +1320,7 @@ func _on_field_verdict_changed(field_id: String, verdict: int, _info: Dictionary
 			and not game_manager.game_finished
 		)
 		(deadend["root"] as Control).visible = show_deadend
-		(deadend["root"] as Control).mouse_filter = Control.MOUSE_FILTER_STOP if show_deadend else Control.MOUSE_FILTER_IGNORE
+		(deadend["root"] as Control).mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_refresh_additional_screens()
 	_refresh_player_actions()
 func _ui_for_field(field_id: String) -> Dictionary:
@@ -1564,7 +1566,8 @@ func _forward_input_to_viewport(event: InputEvent, pixel: Vector2, target_viewpo
 		(forwarded as InputEventScreenTouch).position = pixel
 	target_viewport.push_input(forwarded, true)
 func _any_deadend_visible() -> bool:
-	for ui in [player_one_ui, player_two_ui]:
+	# В кольцевом режиме предупреждение живёт в ring_ui, а не в player_one/two_ui.
+	for ui in [player_one_ui, player_two_ui, ring_ui]:
 		if not ui.is_empty() and (ui["deadend"]["root"] as Control).visible:
 			return true
 	return false
