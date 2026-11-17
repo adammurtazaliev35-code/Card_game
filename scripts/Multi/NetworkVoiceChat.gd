@@ -126,16 +126,20 @@ func _collect_voice_nodes(node: Node, output: Array[Node]) -> void:
 
 
 func _configure_input_device(voice: Node) -> void:
-	var devices: PackedStringArray = voice.call("get_input_devices")
-	if devices.is_empty():
-		push_warning("NetworkVoiceChat: GD-Sync не обнаружил устройство записи.")
-		return
-
+	# Cache the requested setting even on failure: _process() must not retry and
+	# emit the same warning every frame while recording is unavailable.
+	_last_input_device = GameSettings.voice_input_device
 	if not bool(ProjectSettings.get_setting("audio/driver/enable_input", false)):
 		push_warning(
 			"NetworkVoiceChat: включи Audio > Driver > Enable Input в Project Settings "
 			+ "и перезапусти игру, иначе Godot не сможет захватывать микрофон."
 		)
+		return
+
+	var devices: PackedStringArray = voice.call("get_input_devices")
+	if devices.is_empty():
+		push_warning("NetworkVoiceChat: GD-Sync не обнаружил устройство записи.")
+		return
 
 	var preferred := GameSettings.voice_input_device.strip_edges()
 	if preferred.is_empty():
@@ -146,7 +150,6 @@ func _configure_input_device(voice: Node) -> void:
 		var system_device := AudioServer.input_device
 		selected = system_device if devices.has(system_device) else str(devices[0])
 	voice.call("set_input_device", selected)
-	_last_input_device = GameSettings.voice_input_device
 
 
 func _apply_voice_settings() -> void:
