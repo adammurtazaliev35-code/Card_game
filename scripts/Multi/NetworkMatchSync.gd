@@ -72,6 +72,11 @@ func _is_local_host() -> bool:
 	return GDSync.is_host()
 
 
+func _on_host_changed(_is_host: bool, new_host_id: int) -> void:
+	if new_host_id >= 0:
+		NetworkMatchState.host_client_id = new_host_id
+
+
 func _ready() -> void:
 	# Пауза в сетевой партии не должна останавливать приём ходов соперника.
 	process_mode = Node.PROCESS_MODE_ALWAYS
@@ -101,6 +106,8 @@ func _ready() -> void:
 	GDSync.client_left.connect(_on_client_left)
 	GDSync.client_joined.connect(_on_client_joined)
 	GDSync.disconnected.connect(_on_disconnected)
+	if not GDSync.host_changed.is_connected(_on_host_changed):
+		GDSync.host_changed.connect(_on_host_changed)
 
 	opponent_connected = GDSync.lobby_get_all_clients().has(get_opponent_id())
 	_send_hello(true)
