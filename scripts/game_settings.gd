@@ -112,6 +112,7 @@ static var voice_volume := 0.8
 static var voice_input_threshold := 0.01
 ## GD-Sync: 0 = очень высокое качество, 3 = низкое.
 static var voice_quality := 2
+static var voice_input_device := "Default"
 static var voice_ptt_keycode: int = KEY_V
 static var show_game_action_hud := false
 static var _loaded := false
@@ -137,6 +138,7 @@ static func ensure_loaded() -> void:
 		voice_volume = clampf(float(cfg.get_value("voice", "volume", voice_volume)), 0.0, 1.0)
 		voice_input_threshold = clampf(float(cfg.get_value("voice", "input_threshold", voice_input_threshold)), 0.001, 0.1)
 		voice_quality = clampi(int(cfg.get_value("voice", "quality", voice_quality)), 0, 3)
+		voice_input_device = str(cfg.get_value("voice", "input_device", voice_input_device))
 		voice_ptt_keycode = int(cfg.get_value("voice", "ptt_keycode", voice_ptt_keycode))
 		show_game_action_hud = bool(cfg.get_value("ui", "camera_action_hud", show_game_action_hud))
 		if cfg.has_section_key("display", "mode"):
@@ -148,6 +150,10 @@ static func ensure_loaded() -> void:
 		display_mode = _detect_display_mode()
 	if not PALETTES.has(palette_id):
 		palette_id = "classic"
+	if voice_input_device.strip_edges().is_empty():
+		voice_input_device = "Default"
+	AudioServer.input_device = voice_input_device
+	voice_input_device = AudioServer.input_device
 	_ensure_bus(BUS_MUSIC)
 	_ensure_bus(BUS_SFX)
 	apply_audio()
@@ -167,6 +173,7 @@ static func save() -> void:
 	cfg.set_value("voice", "volume", voice_volume)
 	cfg.set_value("voice", "input_threshold", voice_input_threshold)
 	cfg.set_value("voice", "quality", voice_quality)
+	cfg.set_value("voice", "input_device", voice_input_device)
 	cfg.set_value("voice", "ptt_keycode", voice_ptt_keycode)
 	cfg.set_value("ui", "camera_action_hud", show_game_action_hud)
 	var err := cfg.save(PATH)
@@ -433,6 +440,16 @@ static func set_voice_ptt_key(keycode: int) -> void:
 		return
 	voice_ptt_keycode = keycode
 	apply_voice_input()
+	save()
+
+
+static func set_voice_input_device(device_name: String) -> void:
+	ensure_loaded()
+	voice_input_device = device_name.strip_edges()
+	if voice_input_device.is_empty():
+		voice_input_device = "Default"
+	AudioServer.input_device = voice_input_device
+	voice_input_device = AudioServer.input_device
 	save()
 
 

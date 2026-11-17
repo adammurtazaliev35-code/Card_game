@@ -1,6 +1,8 @@
 extends Camera3D
 
 @export var target := Vector3.ZERO          # центр игрового поля на поверхности стола
+## 0 = автоматическое определение по сетевому слоту/двум камерам; 1 или 2 = ручной слот.
+@export_range(0, 2, 1) var network_player_slot_override := 0
 @export_range(30.0, 90.0) var pitch_deg := 58.0   # угол к горизонту (90 = строго сверху)
 @export_range(20.0, 70.0) var hfov_deg := 20.0
 @export var fit_width := 0.9                # ширина стола (или игрового поля) в метрах
@@ -68,11 +70,40 @@ var _orbit_goal := Vector2.ZERO
 var _touch_points: Dictionary = {}
 var _touch_prev_distance := 0.0
 var _touch_prev_angle := 0.0
+var _network_player_slot := 0
 
 
 func _ready() -> void:
+	add_to_group("network_game_cameras")
 	_zoom = start_zoom
 	_zoom_goal = start_zoom
+	_update_camera()
+	call_deferred("_resolve_network_player_slot")
+
+
+func _resolve_network_player_slot() -> void:
+	if not NetworkMatchState.active:
+		_network_player_slot = 0
+		return
+
+	if network_player_slot_override == 1 or network_player_slot_override == 2:
+		_network_player_slot = network_player_slot_override
+		_update_camera()
+		return
+
+	var cameras: Array[Camera3D] = []
+	for candidate in get_tree().get_nodes_in_group("network_game_cameras"):
+		if candidate is Camera3D:
+			cameras.append(candidate as Camera3D)
+	cameras.sort_custom(
+		func(a: Camera3D, b: Camera3D) -> bool:
+			return str(a.get_path()) < str(b.get_path())
+	)
+
+	if cameras.size() == 2:
+		_network_player_slot = cameras.find(self) + 1
+	else:
+		_network_player_slot = NetworkMatchState.slot_of(int(GDSync.get_client_id()))
 	_update_camera()
 
 
@@ -330,8 +361,12 @@ func _update_camera() -> void:
 		89.0
 	))
 	var offset := Vector3(0.0, sin(p), cos(p)) * _distance()
-	var yaw := _look.x * yaw_max_deg + _orbit.x
-	offset = offset.rotated(Vector3.UP, deg_to_rad(yaw))
+	# Player 2 sits at the opposite end of the table. Reverse horizontal
+	# camera movement as well so the mirrored controls remain natural.
+	var side_sign := -1.0 if _network_player_slot == 2 else 1.0
+	var side_yaw := PI if _network_player_slot == 2 else 0.0
+	var yaw := side_yaw + deg_to_rad(side_sign * (_look.x * yaw_max_deg + _orbit.x))
+	offset = offset.rotated(Vector3.UP, yaw)
 
 	global_position = look_point + offset
 	look_at(look_point, Vector3.UP)

@@ -9,6 +9,7 @@ const MODE_SPIDER := 1
 const MODE_KLONDIKE := 2
 const MAX_PLAYERS := 2
 const GAME_TAG := "CardSolitaire"
+const HOST_CLIENT_ID_TAG := "HostClientId"
 
 # Все цвета интерфейса берутся из активной палитры GameSettings.
 
@@ -70,6 +71,7 @@ var _created_lobby_names: Dictionary = {}
 var _local_player_name := "Игрок"
 var _local_player_color := GameSettings.get_color("gold")
 var _room_players: Dictionary = {} # client_id -> {"name": String, "color": Color}
+var _room_host_client_id := -1
 
 
 func _ready() -> void:
@@ -164,6 +166,10 @@ func _connect_gdsync_signals() -> void:
 		GDSync.client_left.connect(_on_client_left)
 	if not GDSync.player_data_changed.is_connected(_on_player_data_changed):
 		GDSync.player_data_changed.connect(_on_player_data_changed)
+	if not GDSync.host_changed.is_connected(_on_host_changed):
+		GDSync.host_changed.connect(_on_host_changed)
+	if not GDSync.lobby_tags_changed.is_connected(_on_lobby_tags_changed):
+		GDSync.lobby_tags_changed.connect(_on_lobby_tags_changed)
 	if not GDSync.kicked.is_connected(_on_kicked):
 		GDSync.kicked.connect(_on_kicked)
 
@@ -447,6 +453,58 @@ func _guest_color() -> Color:
 	return GameSettings.get_color("focus")
 
 
+func _is_local_room_host() -> bool:
+	var local_id := int(GDSync.get_client_id())
+	if _in_lobby and _room_host_client_id >= 0:
+		return local_id == _room_host_client_id
+	return GDSync.is_host()
+
+
+func _update_room_host_from_tag() -> void:
+	if not _in_lobby:
+		return
+	var tagged_host_id := int(GDSync.lobby_get_tag(HOST_CLIENT_ID_TAG, -1))
+	if tagged_host_id >= 0:
+		_room_host_client_id = tagged_host_id
+		_refresh_local_player_role()
+
+
+func _refresh_local_player_role() -> void:
+	var local_id := int(GDSync.get_client_id())
+	if local_id < 0 or _room_host_client_id < 0:
+		return
+	var next_color := _host_color() if local_id == _room_host_client_id else _guest_color()
+	if not next_color.is_equal_approx(_local_player_color):
+		_local_player_color = next_color
+		if GDSync.is_active():
+			GDSync.player_set_data("PlayerColor", _local_player_color)
+	if _room_players.has(local_id):
+		_room_players[local_id]["color"] = _local_player_color
+
+
+func _on_host_changed(_is_host: bool, new_host_id: int) -> void:
+	if new_host_id < 0:
+		return
+	_room_host_client_id = new_host_id
+	if not _in_lobby:
+		return
+	if int(GDSync.get_client_id()) == new_host_id:
+		GDSync.lobby_set_tag(HOST_CLIENT_ID_TAG, new_host_id)
+	_refresh_local_player_role()
+	_refresh_room_ui()
+
+
+func _on_lobby_tags_changed(key: String, value: Variant) -> void:
+	if key != HOST_CLIENT_ID_TAG or value == null:
+		return
+	var new_host_id := int(value)
+	if new_host_id < 0:
+		return
+	_room_host_client_id = new_host_id
+	_refresh_local_player_role()
+	_refresh_room_ui()
+
+
 func _init_lobby_settings() -> void:
 	if GameSession.mode == MODE_SPIDER or GameSession.mode == MODE_KLONDIKE:
 		_selected_mode = GameSession.mode
@@ -526,7 +584,7 @@ func _update_config_ui() -> void:
 			if is_klondike
 			else "Паук: выбери зеркальную или кольцевую раскладку. Классическая раскладка недоступна для двух игроков."
 		)
-	var can_edit := not _in_lobby or GDSync.is_host()
+	var can_edit := not _in_lobby or _is_local_room_host()
 	_mode_selector.disabled = not can_edit
 	_layout_selector.disabled = not can_edit
 	_draw_selector.disabled = not can_edit
@@ -543,7 +601,7 @@ func _update_config_ui() -> void:
 
 
 func _publish_lobby_configuration() -> void:
-	if not _in_lobby or not GDSync.is_host():
+	if not _in_lobby or not _is_local_room_host():
 		return
 	GDSync.lobby_set_data("Mode", _selected_mode)
 	GDSync.lobby_set_data("Layout", _selected_layout)
@@ -731,7 +789,7 @@ func _on_gdsync_connected() -> void:
 	_auto_retries_left = AUTO_RETRIES
 	if _reconnect_button != null:
 		_reconnect_button.visible = false
-	_local_player_color = _host_color() if GDSync.is_host() else _guest_color()
+	_local_player_color = _host_color() if _is_local_room_host() else _guest_color()
 	_apply_player_name()
 	if _use_lan:
 		_set_status("Локальная сеть готова. Создай комнату или нажми «Обновить», чтобы найти комнату в сети.")
@@ -779,6 +837,8 @@ func _on_disconnected() -> void:
 	NetworkMatchState.player_two_name = "Игрок 2"
 	NetworkMatchState.player_one_id = -1
 	NetworkMatchState.player_two_id = -1
+	NetworkMatchState.host_client_id = -1
+	_room_host_client_id = -1
 	_in_lobby = false
 	_current_lobby_name = ""
 	_room_players.clear()
@@ -805,7 +865,7 @@ func _create_room() -> void:
 		password,
 		_public_toggle.button_pressed,
 		MAX_PLAYERS,
-		{"Game": GAME_TAG, "Mode": str(_selected_mode), "Layout": str(_selected_layout), "Version": "1"}
+		{"Game": GAME_TAG, "Mode": str(_selected_mode), "Layout": str(_selected_layout), "Version": "1", HOST_CLIENT_ID_TAG: int(GDSync.get_client_id())}
 	)
 
 
@@ -874,7 +934,8 @@ func _on_lobby_joined(lobby_name: String) -> void:
 	# Раньше это сбрасывало список игроков и заново писало данные комнаты —
 	# бесконечный цикл, второй игрок «не появлялся», кнопка «НАЧАТЬ» не включалась.
 	if _in_lobby and lobby_name == _current_lobby_name:
-		if not GDSync.is_host():
+		_update_room_host_from_tag()
+		if not _is_local_room_host():
 			_read_lobby_configuration()
 		return
 
@@ -882,10 +943,16 @@ func _on_lobby_joined(lobby_name: String) -> void:
 	_current_lobby_name = lobby_name
 	_room_players.clear()
 	var local_id := int(GDSync.get_client_id())
-	_local_player_color = _host_color() if GDSync.is_host() else _guest_color()
+	var tagged_host_id := int(GDSync.lobby_get_tag(HOST_CLIENT_ID_TAG, -1))
+	if tagged_host_id >= 0:
+		_room_host_client_id = tagged_host_id
+	elif _room_host_client_id < 0 and _is_local_room_host():
+		_room_host_client_id = local_id
+		GDSync.lobby_set_tag(HOST_CLIENT_ID_TAG, local_id)
+	_local_player_color = _host_color() if local_id == _room_host_client_id else _guest_color()
 	GDSync.player_set_data("PlayerColor", _local_player_color)
 	_room_players[local_id] = {"name": _local_player_name, "color": _local_player_color}
-	if GDSync.is_host():
+	if _is_local_room_host():
 		GDSync.lobby_set_data("Game", GAME_TAG)
 		_publish_lobby_configuration()
 	else:
@@ -894,7 +961,7 @@ func _on_lobby_joined(lobby_name: String) -> void:
 	_room_title.text = "КОМНАТА · %s" % _selected_mode_name()
 	_update_config_ui()
 	_room_code_label.text = "Код приглашения: %s" % lobby_name
-	if _use_lan and GDSync.is_host():
+	if _use_lan and _is_local_room_host():
 		_room_code_label.text += "\n" + _lan_addresses_text()
 	_set_status("Вы в комнате. Ожидаем второго игрока…")
 	_refresh_room_ui()
@@ -931,7 +998,7 @@ func _on_client_joined(client_id: int) -> void:
 		_room_players[local_id] = {"name": _local_player_name, "color": _local_player_color}
 	else:
 		# Safety cap for rooms not created by this menu: host rejects a third client.
-		if GDSync.is_host() and _room_players.size() >= MAX_PLAYERS:
+		if _is_local_room_host() and _room_players.size() >= MAX_PLAYERS:
 			GDSync.lobby_kick_client(client_id, "Комната рассчитана максимум на двух игроков.")
 			return
 		_room_players[client_id] = {"name": _client_name(client_id), "color": _client_color(client_id)}
@@ -943,7 +1010,7 @@ func _on_client_joined(client_id: int) -> void:
 			_local_player_name,
 			_local_player_color
 		)
-		if GDSync.is_host():
+		if _is_local_room_host():
 			GDSync.call_func_on(client_id, _receive_lobby_configuration, _selected_mode, _selected_layout, _selected_draw_mode, _deal_options_mask())
 	_refresh_room_ui()
 
@@ -959,6 +1026,8 @@ func _receive_roster_entry(client_id: int, player_name: String, player_color: Co
 
 func _on_client_left(client_id: int) -> void:
 	_room_players.erase(client_id)
+	if client_id == _room_host_client_id:
+		_room_host_client_id = -1
 	_refresh_room_ui()
 	if _in_lobby:
 		_set_status("Игрок вышел. Можно пригласить другого участника.")
@@ -985,8 +1054,9 @@ func _refresh_room_ui() -> void:
 		if slot_index < ids.size():
 			var client_id := int(ids[slot_index])
 			var entry: Dictionary = _room_players[client_id]
-			var player_color: Color = entry.get("color", GameSettings.get_color("text"))
-			var role := "ХОЗЯИН" if player_color.is_equal_approx(_host_color()) else "ГОСТЬ"
+			var is_host_player := client_id == _room_host_client_id
+			var player_color: Color = _host_color() if is_host_player else _guest_color()
+			var role := "ХОЗЯИН" if is_host_player else ("ГОСТЬ" if _room_host_client_id >= 0 else "РОЛЬ…")
 			_player_labels[slot_index].text = "%s\n%s" % [str(entry.get("name", "Игрок")), role]
 			_player_labels[slot_index].add_theme_color_override("font_color", player_color)
 		else:
@@ -994,10 +1064,10 @@ func _refresh_room_ui() -> void:
 			_player_labels[slot_index].add_theme_color_override("font_color", GameSettings.get_color("muted"))
 
 	var ready_to_start := ids.size() == MAX_PLAYERS
-	_start_button.visible = GDSync.is_host()
+	_start_button.visible = _is_local_room_host()
 	_start_button.disabled = not ready_to_start
 	_update_config_ui()
-	if GDSync.is_host():
+	if _is_local_room_host():
 		_set_status("Оба игрока подключены. Можно начинать!" if ready_to_start else "Вы хозяин комнаты. Пригласите второго игрока.")
 	else:
 		_set_status("Ожидаем, пока хозяин комнаты начнёт игру…")
@@ -1060,7 +1130,7 @@ func _join_lobby_from_list(lobby_name: String) -> void:
 
 
 func _start_network_game() -> void:
-	if not _in_lobby or not GDSync.is_host():
+	if not _in_lobby or not _is_local_room_host():
 		return
 	if start_only_with_two_players and _room_players.size() != MAX_PLAYERS:
 		_set_status("Для запуска нужны оба игрока.")
@@ -1130,7 +1200,8 @@ func _start_network_game() -> void:
 		player_two_id,
 		deal_seed,
 		{"Stock": decks.get("field_1", []), "Stock_P2": decks.get("field_2", [])} if not decks.is_empty() else {},
-		_allow_deadend_reset
+		_allow_deadend_reset,
+		_room_host_client_id
 	)
 	_set_status("Запускаем сетевую партию: %s…" % _selected_mode_name())
 	await get_tree().process_frame
@@ -1163,7 +1234,8 @@ func _apply_network_match_settings(
 	player_two_id: int,
 	deal_seed: int = 0,
 	field_decks: Dictionary = {},
-	allow_deadend_reset: bool = true
+	allow_deadend_reset: bool = true,
+	host_client_id: int = -1
 ) -> void:
 	# This function is exposed and called on both clients before the synchronized scene switch.
 	GameSession.mode = mode_id
@@ -1179,6 +1251,7 @@ func _apply_network_match_settings(
 	NetworkMatchState.player_two_name = player_two_name
 	NetworkMatchState.player_one_id = player_one_id
 	NetworkMatchState.player_two_id = player_two_id
+	NetworkMatchState.host_client_id = host_client_id
 	NetworkMatchState.deal_seed = deal_seed
 	NetworkMatchState.field_decks = field_decks
 
@@ -1198,17 +1271,20 @@ func _leave_room() -> void:
 			_created_lobby_names[leaving_lobby_name] = true
 			_remove_local_lan_lobby_cache(leaving_lobby_name)
 		# Lobby metadata belongs to the host; guests only clear their own player data.
-		if GDSync.is_host():
+		if _is_local_room_host():
 			GDSync.lobby_erase_data("NetworkMatch")
+			GDSync.lobby_erase_tag(HOST_CLIENT_ID_TAG)
 		GDSync.player_erase_data("NetworkMatchActive")
 		NetworkMatchState.active = false
 		NetworkMatchState.player_one_name = "Игрок 1"
 		NetworkMatchState.player_two_name = "Игрок 2"
 		NetworkMatchState.player_one_id = -1
 		NetworkMatchState.player_two_id = -1
+		NetworkMatchState.host_client_id = -1
 		GDSync.lobby_leave()
 	_in_lobby = false
 	_current_lobby_name = ""
+	_room_host_client_id = -1
 	_room_players.clear()
 	_room_panel.visible = false
 	_set_status("Вы покинули комнату.")
@@ -1230,6 +1306,8 @@ func _on_kicked(reason: String) -> void:
 	NetworkMatchState.player_two_name = "Игрок 2"
 	NetworkMatchState.player_one_id = -1
 	NetworkMatchState.player_two_id = -1
+	NetworkMatchState.host_client_id = -1
+	_room_host_client_id = -1
 	_in_lobby = false
 	_current_lobby_name = ""
 	_room_players.clear()

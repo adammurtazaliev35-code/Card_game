@@ -66,6 +66,17 @@ func setup(manager: GameManager) -> void:
 	game_manager = manager
 
 
+func _is_local_host() -> bool:
+	if NetworkMatchState.host_client_id >= 0:
+		return int(GDSync.get_client_id()) == NetworkMatchState.host_client_id
+	return GDSync.is_host()
+
+
+func _on_host_changed(_is_host: bool, new_host_id: int) -> void:
+	if new_host_id >= 0:
+		NetworkMatchState.host_client_id = new_host_id
+
+
 func _ready() -> void:
 	# Пауза в сетевой партии не должна останавливать приём ходов соперника.
 	process_mode = Node.PROCESS_MODE_ALWAYS
@@ -95,6 +106,8 @@ func _ready() -> void:
 	GDSync.client_left.connect(_on_client_left)
 	GDSync.client_joined.connect(_on_client_joined)
 	GDSync.disconnected.connect(_on_disconnected)
+	if not GDSync.host_changed.is_connected(_on_host_changed):
+		GDSync.host_changed.connect(_on_host_changed)
 
 	opponent_connected = GDSync.lobby_get_all_clients().has(get_opponent_id())
 	_send_hello(true)
@@ -567,7 +580,7 @@ func answer_rematch(accepted: bool) -> void:
 		rematch_state_changed.emit("IDLE", "Приглашение отклонено.")
 		return
 
-	if GDSync.is_host():
+	if _is_local_host():
 		# Хост единственный выбирает параметры и запускает смену сцены.
 		_start_rematch_as_host()
 	else:
@@ -586,7 +599,7 @@ func _receive_rematch_invitation(requester_slot: int, request_id: int) -> void:
 
 	# Если оба игрока почти одновременно нажали «Новая партия», это взаимное согласие.
 	if _rematch_outgoing_id != 0:
-		if GDSync.is_host():
+		if _is_local_host():
 			_start_rematch_as_host()
 		else:
 			GDSync.call_func(_receive_rematch_response, local_slot, request_id, true)
@@ -612,7 +625,7 @@ func _receive_rematch_response(responder_slot: int, request_id: int, accepted: b
 		return
 	# Положительный ответ запускает матч только на хосте. Если ответ пришёл
 	# гостю, это лишь подтверждение встречного запроса; хост пришлёт Start.
-	if GDSync.is_host():
+	if _is_local_host():
 		_start_rematch_as_host()
 	else:
 		rematch_state_changed.emit("WAITING", "Согласие получено. Ожидаем запуск от хоста.")
@@ -631,7 +644,7 @@ func _receive_rematch_cancel(sender_slot: int, request_id: int) -> void:
 
 
 func _start_rematch_as_host() -> void:
-	if not is_network_match() or not GDSync.is_host() or _rematch_start_sent:
+	if not is_network_match() or not _is_local_host() or _rematch_start_sent:
 		return
 	if game_manager == null:
 		push_warning("NetworkMatchSync: нельзя начать новую партию без GameManager.")
@@ -657,7 +670,7 @@ func _start_rematch_as_host() -> void:
 
 
 func _receive_rematch_start(seed_value: int, mode: int, draw: int, suits: int) -> void:
-	if not is_network_match() or GDSync.is_host() or _rematch_scene_started:
+	if not is_network_match() or _is_local_host() or _rematch_scene_started:
 		return
 	# На этом клиенте уже проверено, что он не хост. В лобби из двух
 	# участников единственный удалённый отправитель и есть текущий хост.
@@ -670,7 +683,7 @@ func _receive_rematch_start(seed_value: int, mode: int, draw: int, suits: int) -
 
 
 func _receive_rematch_ready(responder_slot: int, seed_value: int) -> void:
-	if not is_network_match() or not GDSync.is_host() or not _rematch_start_sent:
+	if not is_network_match() or not _is_local_host() or not _rematch_start_sent:
 		return
 	if responder_slot != get_opponent_slot() or seed_value != _rematch_seed:
 		return

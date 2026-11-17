@@ -8,6 +8,8 @@ static var player_one_name: String = "Игрок 1"
 static var player_two_name: String = "Игрок 2"
 static var player_one_id: int = -1
 static var player_two_id: int = -1
+## Канонический ID хозяина комнаты, общий для обоих клиентов.
+static var host_client_id: int = -1
 ## Общий сид тасовки: одинаковый на обоих клиентах, задаётся хостом при старте.
 ## 0 = сид не задан (одиночная игра или старая версия лобби).
 static var deal_seed: int = 0
@@ -26,6 +28,7 @@ static func clear() -> void:
 	player_two_name = "Игрок 2"
 	player_one_id = -1
 	player_two_id = -1
+	host_client_id = -1
 	deal_seed = 0
 	field_decks = {}
 

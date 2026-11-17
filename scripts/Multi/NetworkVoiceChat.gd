@@ -17,6 +17,7 @@ var _mobile_layer: CanvasLayer
 var _last_volume := -1.0
 var _last_threshold := -1.0
 var _last_quality := -1
+var _last_input_device := ""
 
 
 func _ready() -> void:
@@ -125,19 +126,29 @@ func _collect_voice_nodes(node: Node, output: Array[Node]) -> void:
 
 
 func _configure_input_device(voice: Node) -> void:
-	var devices: PackedStringArray = voice.call("get_input_devices")
-
-	if devices.is_empty():
+	# Cache the requested setting even on failure: _process() must not retry and
+	# emit the same warning every frame while recording is unavailable.
+	_last_input_device = GameSettings.voice_input_device
+	if not bool(ProjectSettings.get_setting("audio/driver/enable_input", false)):
 		push_warning(
-			"NetworkVoiceChat: GD-Sync не обнаружил устройство записи."
+			"NetworkVoiceChat: включи Audio > Driver > Enable Input в Project Settings "
+			+ "и перезапусти игру, иначе Godot не сможет захватывать микрофон."
 		)
 		return
 
-	var selected := AudioServer.input_device
+	var devices: PackedStringArray = voice.call("get_input_devices")
+	if devices.is_empty():
+		push_warning("NetworkVoiceChat: GD-Sync не обнаружил устройство записи.")
+		return
 
-	if selected.is_empty() or not devices.has(selected):
-		selected = str(devices[0])
-
+	var preferred := GameSettings.voice_input_device.strip_edges()
+	if preferred.is_empty():
+		preferred = "Default"
+	AudioServer.input_device = preferred
+	var selected := preferred
+	if not devices.has(selected):
+		var system_device := AudioServer.input_device
+		selected = system_device if devices.has(system_device) else str(devices[0])
 	voice.call("set_input_device", selected)
 
 
@@ -167,12 +178,15 @@ func _update_settings_cache() -> void:
 	_last_volume = GameSettings.voice_volume
 	_last_threshold = GameSettings.voice_input_threshold
 	_last_quality = GameSettings.voice_quality
+	_last_input_device = GameSettings.voice_input_device
 
 
 func _process(_delta: float) -> void:
 	if not is_instance_valid(_local_voice):
 		return
 
+	if GameSettings.voice_input_device != _last_input_device:
+		_configure_input_device(_local_voice)
 	if GameSettings.voice_volume != _last_volume \
 			or GameSettings.voice_input_threshold != _last_threshold \
 			or GameSettings.voice_quality != _last_quality:

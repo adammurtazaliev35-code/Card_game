@@ -20,6 +20,8 @@ var _display_apply_button: Button
 var _display_status: Label
 var _pending_display_mode := ""
 var _voice_volume: HSlider
+var _voice_input_device_selector: OptionButton
+var _voice_input_hint: Label
 var _voice_sensitivity: HSlider
 var _voice_quality: OptionButton
 var _voice_key_button: Button
@@ -112,21 +114,28 @@ func _build_tabs() -> void:
 	var voice_page := VBoxContainer.new()
 	voice_page.name = "Голосовой чат"
 	_prepare_tab_page(tabs, voice_page)
-	voice_page.add_theme_constant_override("separation", 16)
-	voice_page.add_child(_label("ГОЛОСОВАЯ СВЯЗЬ", 22, GameSettings.get_color("gold")))
+	var voice_scroll := ScrollContainer.new()
+	voice_scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	voice_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	voice_page.add_child(voice_scroll)
+	var voice_content := VBoxContainer.new()
+	voice_content.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	voice_content.add_theme_constant_override("separation", 16)
+	voice_scroll.add_child(voice_content)
+	voice_content.add_child(_label("ГОЛОСОВАЯ СВЯЗЬ", 22, GameSettings.get_color("gold")))
 	var voice_description := _label(
-		"Настрой передачу микрофона и громкость голоса второго игрока.", 14,
+		"Выбери входной микрофон, настрой передачу голоса и громкость собеседника.", 14,
 		GameSettings.get_color("muted")
 	)
 	voice_description.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	voice_page.add_child(voice_description)
+	voice_content.add_child(voice_description)
 	_voice_volume = _add_slider(
-		voice_page, "Громкость собеседника", GameSettings.voice_volume,
+		voice_content, "Громкость собеседника", GameSettings.voice_volume,
 		_on_voice_volume_changed, _on_voice_settings_released
 	)
 	_voice_volume.focus_exited.connect(_on_voice_settings_released)
 	_voice_sensitivity = _add_slider(
-		voice_page, "Чувствительность микрофона", GameSettings.voice_input_threshold,
+		voice_content, "Чувствительность микрофона", GameSettings.voice_input_threshold,
 		_on_voice_sensitivity_changed, _on_voice_settings_released,
 		0.001, 0.1, 0.001
 	)
@@ -138,19 +147,21 @@ func _build_tabs() -> void:
 		GameSettings.get_color("muted")
 	)
 	sensitivity_hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	voice_page.add_child(sensitivity_hint)
-	_add_voice_quality_selector(voice_page)
+	voice_content.add_child(sensitivity_hint)
+	if GameSettings.is_voice_key_binding_supported():
+		_add_voice_input_device_selector(voice_content)
+	_add_voice_quality_selector(voice_content)
 	if GameSettings.is_voice_key_binding_supported():
 		_voice_key_button = _button(_voice_key_text(), _on_voice_key_capture_pressed)
 		_voice_key_button.custom_minimum_size = Vector2(260, 46)
-		voice_page.add_child(_voice_key_button)
+		voice_content.add_child(_voice_key_button)
 		var ptt_hint := _label("Удерживай выбранную клавишу, чтобы говорить.", 14, GameSettings.get_color("muted"))
 		ptt_hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-		voice_page.add_child(ptt_hint)
+		voice_content.add_child(ptt_hint)
 	else:
 		var mobile_hint := _label("На мобильном клавиша не назначается: используй экранную кнопку микрофона в партии.", 15, GameSettings.get_color("muted"))
 		mobile_hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-		voice_page.add_child(mobile_hint)
+		voice_content.add_child(mobile_hint)
 
 	if GameSettings.is_display_mode_supported():
 		var display_page := VBoxContainer.new()
@@ -282,6 +293,15 @@ func refresh() -> void:
 		_display_status.text = ""
 	if _voice_volume != null:
 		_voice_volume.set_value_no_signal(GameSettings.voice_volume)
+	if _voice_input_device_selector != null:
+		var selected_device_index := 0
+		for index in range(_voice_input_device_selector.item_count):
+			if str(_voice_input_device_selector.get_item_metadata(index)) == GameSettings.voice_input_device:
+				selected_device_index = index
+				break
+		_voice_input_device_selector.select(selected_device_index)
+	if _voice_input_hint != null:
+		_voice_input_hint.text = _voice_input_hint_text()
 	if _voice_sensitivity != null:
 		_voice_sensitivity.set_value_no_signal(GameSettings.voice_input_threshold)
 	if _voice_quality != null:
@@ -379,6 +399,60 @@ func _on_voice_sensitivity_changed(value: float) -> void:
 func _on_voice_settings_released() -> void:
 	GameSettings.save()
 	
+func _add_voice_input_device_selector(parent: VBoxContainer) -> void:
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 14)
+	var caption := _label("Микрофон", 21, GameSettings.get_color("text"))
+	caption.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
+	caption.custom_minimum_size = Vector2(160, 0)
+	row.add_child(caption)
+
+	_voice_input_device_selector = OptionButton.new()
+	_voice_input_device_selector.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_voice_input_device_selector.custom_minimum_size = Vector2(220, 44)
+	_voice_input_device_selector.add_item("Системное устройство (по умолчанию)")
+	_voice_input_device_selector.set_item_metadata(0, "Default")
+	var devices: PackedStringArray = AudioServer.get_input_device_list()
+	for device_name in devices:
+		if device_name.is_empty() or device_name == "Default":
+			continue
+		_voice_input_device_selector.add_item(device_name)
+		_voice_input_device_selector.set_item_metadata(
+			_voice_input_device_selector.item_count - 1,
+			device_name
+		)
+	var selected_index := 0
+	for index in range(_voice_input_device_selector.item_count):
+		if str(_voice_input_device_selector.get_item_metadata(index)) == GameSettings.voice_input_device:
+			selected_index = index
+			break
+	_voice_input_device_selector.select(selected_index)
+	_voice_input_device_selector.disabled = devices.is_empty()
+	_voice_input_device_selector.item_selected.connect(func(index: int):
+		var device_name := str(_voice_input_device_selector.get_item_metadata(index))
+		GameSettings.set_voice_input_device(device_name)
+		if _voice_input_hint != null:
+			_voice_input_hint.text = _voice_input_hint_text()
+	)
+	GameSettings.apply_option_button_palette(_voice_input_device_selector)
+	row.add_child(_voice_input_device_selector)
+	parent.add_child(row)
+
+	_voice_input_hint = _label(_voice_input_hint_text(), 14, GameSettings.get_color("muted"))
+	_voice_input_hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
+	_voice_input_hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	parent.add_child(_voice_input_hint)
+
+
+func _voice_input_hint_text() -> String:
+	if not bool(ProjectSettings.get_setting("audio/driver/enable_input", false)):
+		return "Ввод микрофона выключен в настройках проекта. Включи Audio → Driver → Enable Input и перезапусти игру."
+	var devices: PackedStringArray = AudioServer.get_input_device_list()
+	if devices.is_empty():
+		return "Устройства записи не обнаружены. Проверь подключение и разрешение Windows на доступ к микрофону."
+	return "Удерживай назначенную клавишу для передачи голоса. Если друг не слышит тебя, проверь доступ приложений к микрофону в настройках конфиденциальности Windows."
+
+
 func _add_voice_quality_selector(parent: VBoxContainer) -> void:
 	var row := HBoxContainer.new()
 	row.add_theme_constant_override("separation", 14)
