@@ -3,9 +3,8 @@ extends Node
 ## Музыка и звук движения карты. Автозагрузку (Autoload) настраивать не нужно:
 ## узел создаётся сам при первом обращении и живёт между сценами.
 ##
-## Файлы ищутся по имени в любой папке проекта (кроме addons):
-##   music.ogg / .mp3 / .wav  - фоновая музыка
-##   card.ogg  / .mp3 / .wav  - звук движения карты
+## Фоновая музыка берётся только из res://audio/music (ogg/mp3/wav).
+## Звук движения карты ищется отдельно по имени card.* в папках звуков проекта.
 ## В Output при запуске будет написано, что найдено, а что нет.
 ##
 ## Использование:
@@ -15,7 +14,7 @@ extends Node
 const MUSIC_NAME := "music"
 const CARD_NAME := "card"
 ## Плейлист: все треки из этой папки (ogg/mp3/wav) по алфавиту.
-## Если папки нет — как раньше, один файл music.* из любой папки проекта.
+## Другие папки проекта не сканируются для музыки, чтобы не смешивать её со звуками.
 const MUSIC_DIR := "res://audio/music"
 const SPECTRUM_BANDS := 24
 
@@ -127,10 +126,7 @@ func _build_playlist() -> void:
 					_playlist.append(path)
 		_playlist.sort()
 	if _playlist.is_empty():
-		# Совместимость: один файл music.* где угодно в проекте.
-		var single := _find_stream_path(MUSIC_NAME)
-		if not single.is_empty():
-			_playlist.append(single)
+		push_warning("GameAudio: в res://audio/music нет музыкальных файлов (.ogg/.mp3/.wav).")
 	_track_index = 0
 	for i in _playlist.size():
 		if _playlist[i].get_file() == GameSettings.music_track:
