@@ -450,7 +450,7 @@ func _voice_input_hint_text() -> String:
 	var devices: PackedStringArray = AudioServer.get_input_device_list()
 	if devices.is_empty():
 		return "Устройства записи не обнаружены. Проверь подключение и разрешение Windows на доступ к микрофону."
-	return "В сети удерживай назначенную клавишу микрофона, чтобы передавать голос."
+	return "Удерживай назначенную клавишу для передачи голоса. Если друг не слышит тебя, проверь доступ приложений к микрофону в настройках конфиденциальности Windows."
 
 
 func _add_voice_quality_selector(parent: VBoxContainer) -> void:
