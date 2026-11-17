@@ -365,7 +365,7 @@ func _update_camera() -> void:
 	# camera movement as well so the mirrored controls remain natural.
 	var side_sign := -1.0 if _network_player_slot == 2 else 1.0
 	var side_yaw := PI if _network_player_slot == 2 else 0.0
-	var yaw := side_yaw + side_sign * (_look.x * yaw_max_deg + _orbit.x)
+	var yaw := side_yaw + deg_to_rad(side_sign * (_look.x * yaw_max_deg + _orbit.x))
 	offset = offset.rotated(Vector3.UP, yaw)
 
 	global_position = look_point + offset
