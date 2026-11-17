@@ -114,21 +114,28 @@ func _build_tabs() -> void:
 	var voice_page := VBoxContainer.new()
 	voice_page.name = "Голосовой чат"
 	_prepare_tab_page(tabs, voice_page)
-	voice_page.add_theme_constant_override("separation", 16)
-	voice_page.add_child(_label("ГОЛОСОВАЯ СВЯЗЬ", 22, GameSettings.get_color("gold")))
+	var voice_scroll := ScrollContainer.new()
+	voice_scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	voice_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	voice_content.add_child(voice_scroll)
+	var voice_content := VBoxContainer.new()
+	voice_content.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	voice_content.add_theme_constant_override("separation", 16)
+	voice_scroll.add_child(voice_content)
+	voice_content.add_child(_label("ГОЛОСОВАЯ СВЯЗЬ", 22, GameSettings.get_color("gold")))
 	var voice_description := _label(
 		"Выбери входной микрофон, настрой передачу голоса и громкость собеседника.", 14,
 		GameSettings.get_color("muted")
 	)
 	voice_description.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	voice_page.add_child(voice_description)
+	voice_content.add_child(voice_description)
 	_voice_volume = _add_slider(
-		voice_page, "Громкость собеседника", GameSettings.voice_volume,
+		voice_content, "Громкость собеседника", GameSettings.voice_volume,
 		_on_voice_volume_changed, _on_voice_settings_released
 	)
 	_voice_volume.focus_exited.connect(_on_voice_settings_released)
 	_voice_sensitivity = _add_slider(
-		voice_page, "Чувствительность микрофона", GameSettings.voice_input_threshold,
+		voice_content, "Чувствительность микрофона", GameSettings.voice_input_threshold,
 		_on_voice_sensitivity_changed, _on_voice_settings_released,
 		0.001, 0.1, 0.001
 	)
@@ -140,21 +147,21 @@ func _build_tabs() -> void:
 		GameSettings.get_color("muted")
 	)
 	sensitivity_hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	voice_page.add_child(sensitivity_hint)
+	voice_content.add_child(sensitivity_hint)
 	if GameSettings.is_voice_key_binding_supported():
 		_add_voice_input_device_selector(voice_page)
 	_add_voice_quality_selector(voice_page)
 	if GameSettings.is_voice_key_binding_supported():
 		_voice_key_button = _button(_voice_key_text(), _on_voice_key_capture_pressed)
 		_voice_key_button.custom_minimum_size = Vector2(260, 46)
-		voice_page.add_child(_voice_key_button)
+		voice_content.add_child(_voice_key_button)
 		var ptt_hint := _label("Удерживай выбранную клавишу, чтобы говорить.", 14, GameSettings.get_color("muted"))
 		ptt_hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-		voice_page.add_child(ptt_hint)
+		voice_content.add_child(ptt_hint)
 	else:
 		var mobile_hint := _label("На мобильном клавиша не назначается: используй экранную кнопку микрофона в партии.", 15, GameSettings.get_color("muted"))
 		mobile_hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-		voice_page.add_child(mobile_hint)
+		voice_content.add_child(mobile_hint)
 
 	if GameSettings.is_display_mode_supported():
 		var display_page := VBoxContainer.new()
