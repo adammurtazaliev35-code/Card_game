@@ -34,6 +34,9 @@ var _want_music := false
 var _last_card_ms := 0
 var _playlist: Array[String] = []
 var _track_index := 0
+## Индексы треков, которые ещё не звучали в текущем shuffle-цикле.
+var _shuffle_bag: Array[int] = []
+var _shuffle_started := false
 var _spectrum: AudioEffectSpectrumAnalyzerInstance
 
 
@@ -95,7 +98,12 @@ func play_card() -> void:
 func _start_music() -> void:
 	if _music.playing:
 		return
-	if _music.stream == null:
+	if _playlist.is_empty():
+		return
+	if not _shuffle_started:
+		_shuffle_started = true
+		_load_track(_take_random_track())
+	elif _music.stream == null:
 		_load_track(_track_index)
 	if _music.stream == null:
 		return
@@ -106,7 +114,7 @@ func _on_music_finished() -> void:
 	if not _want_music:
 		return
 	if _playlist.size() > 1:
-		next_track()      # плейлист идёт по кругу
+		_play_next_random_track()
 	else:
 		_music.play()     # один трек — зацикливаем
 
@@ -127,6 +135,11 @@ func _build_playlist() -> void:
 	if _playlist.is_empty():
 		push_warning("GameAudio: в res://audio/music нет музыкальных файлов (.ogg/.mp3/.wav).")
 	_track_index = 0
+	_shuffle_bag.clear()
+	for i in _playlist.size():
+		_shuffle_bag.append(i)
+	_shuffle_bag.shuffle()
+	_shuffle_started = false
 	for i in _playlist.size():
 		if _playlist[i].get_file() == GameSettings.music_track:
 			_track_index = i
@@ -151,12 +164,34 @@ func prev_track() -> void:
 	_switch_track(_track_index - 1)
 
 
+func _take_random_track() -> int:
+	if _playlist.is_empty():
+		return -1
+	if _shuffle_bag.is_empty():
+		for i in _playlist.size():
+			if i != _track_index:
+				_shuffle_bag.append(i)
+		_shuffle_bag.shuffle()
+	if _shuffle_bag.is_empty():
+		return _track_index
+	return _shuffle_bag.pop_back()
+
+
+func _play_next_random_track() -> void:
+	var next_index := _take_random_track()
+	if next_index >= 0:
+		_switch_track(next_index)
+
+
 func _switch_track(index: int) -> void:
 	if _playlist.is_empty():
 		return
 	var was_playing := _music.playing or _want_music
 	_music.stop()
 	_load_track(index)
+	_shuffle_started = true
+	# Ручной выбор считается уже прослушанным в текущем цикле.
+	_shuffle_bag.erase(_track_index)
 	GameSettings.save()
 	if was_playing and _music.stream != null:
 		_music.play()
